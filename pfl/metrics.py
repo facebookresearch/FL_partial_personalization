@@ -35,7 +35,7 @@ def compute_metrics_from_global_model(
     sizes = []
     for client_id in list_of_clients:
         client_dataloader = fed_dataloader.get_client_dataloader(client_id)
-        client_size, metrics_for_client = compute_metrics_from_global_model_for_single_client(
+        client_size, metrics_for_client = compute_metrics_for_client(
             global_model, client_dataloader, metrics_of_batch_fn
         )
         sizes.append(client_size)
@@ -44,21 +44,21 @@ def compute_metrics_from_global_model(
                 collected_metrics[metric_name].append(metric_val)
         else:
             collected_metrics = OrderedDict((metric_name, [metric_val]) for (metric_name, metric_val) in metrics_for_client.items())
-    combined_metrics = _summarize_client_metrics(sizes, collected_metrics)
+    combined_metrics = summarize_client_metrics(sizes, collected_metrics)
     if is_train:
         global_model.train()
-
     return combined_metrics
 
-def compute_metrics_from_global_model_for_single_client(
-        global_model, client_dataloader, metrics_of_batch_fn
+@torch.no_grad()
+def compute_metrics_for_client(
+        model, client_dataloader, metrics_of_batch_fn
 ):
-    device = next(global_model.parameters()).device
+    device = next(model.parameters()).device
     total_size = 0
     metrics_for_client = None
     for x, y in client_dataloader:
         x, y = x.to(device), y.to(device)
-        yhat = global_model(x)
+        yhat = model(x)
         this_size, metrics = metrics_of_batch_fn(yhat, y)  # OrderedDict
         if metrics_for_client is not None:
             for metric_name in metrics_for_client.keys():
@@ -71,7 +71,7 @@ def compute_metrics_from_global_model_for_single_client(
         total_size += this_size
     return total_size, metrics_for_client
 
-def _summarize_client_metrics(client_sizes, collected_metrics):
+def summarize_client_metrics(client_sizes, collected_metrics):
     # collected_metrics: OrderedDict[metric_name -> list_of_metric_values]
     # return OrderedDict[f'{metric_name}|{statistic}' -> metric_summary_value]
     summary_metrics = OrderedDict()

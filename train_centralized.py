@@ -26,11 +26,10 @@ def main():
 
     # Setup model
     start_time = time.time()
-    model = pfl.models.get_model_from_args(args, device).to(device).train()
+    model = pfl.models.get_model_from_args(args, device).train()
     optimizer = pfl.utils.setup_centralized_optimizer_from_args(args, model, use_warmup=args.use_warmup)
-    num_model_params = sum([v.view(-1).shape[0] for v in model.parameters()])
-    print(f'Setup model with {num_model_params}(={num_model_params:.3g}) params in',
-          timedelta(seconds=round(time.time() - start_time)))
+    model.print_summary(args.train_batch_size)
+    print(f'Setup model in', timedelta(seconds=round(time.time() - start_time)))
 
     # Setup dataloaders
     start_time = time.time()
@@ -85,7 +84,7 @@ def main():
         start_time = time.time()
 
     # Main training loop
-    avg_loss = math.log(train_fed_loader.num_classes)
+    avg_loss = math.log(train_fed_loader.num_classes)  # initialize at random guessing
     num_train_clients = len(train_fed_loader)
     _log_test(model, 0)
     start_time = time.time()

@@ -1,5 +1,6 @@
 from collections import OrderedDict
 import torch
+from torchinfo import summary
 
 
 class EmnistConvNet(torch.nn.Module):
@@ -20,3 +21,7 @@ class EmnistConvNet(torch.nn.Module):
         output = output.view(img_batch.shape[0], -1)
         output = self.fc(output)
         return output
+    
+    def print_summary(self, train_batch_size):
+        device = next(self.parameters()).device
+        print(summary(self, input_size=(train_batch_size, 1, 28, 28), device=device))

@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import time
 import tensorflow as tf
+from tensorflow._api.v2 import data
 import tensorflow_federated as tff
 import torch
 
@@ -45,7 +46,8 @@ class SOFederatedDataloader(FederatedDataloader):
             client_list = pd.read_csv(client_list, dtype=str).to_numpy().reshape(-1).tolist()
         elif type(client_list) != list or len(client_list) <= 1:
             raise ValueError(f'Stack Overflow dataset requires the list of clients to be specified.')
-        self.available_clients = set(client_list)
+        self.available_clients_set = set(client_list)
+        self.available_clients = client_list
         self.batch_size = batch_size
         self.max_num_elements_per_client = max_num_elements_per_client
         self.max_sequence_length = max_sequence_length
@@ -54,7 +56,8 @@ class SOFederatedDataloader(FederatedDataloader):
         
         print('Loading vocab')
         start_time = time.time()
-        vocab_dict = tff.simulation.datasets.stackoverflow.load_word_counts(cache_dir=data_dir)
+        # vocab_dict = tff.simulation.datasets.stackoverflow.load_word_counts(cache_dir=data_dir)
+        vocab_dict = load_so_word_counts(data_dir)
         vocab = list(vocab_dict.keys())[:vocab_size]
         self.tokenize_fn, self.non_vocab_idx = get_tokenizer_fn_and_nonvocab_tokens(
             vocab, max_sequence_length, num_oov_buckets
@@ -74,7 +77,7 @@ class SOFederatedDataloader(FederatedDataloader):
         print(f'Loaded data in {round(time.time() - start_time, 2)} seconds')
 
     def get_client_dataloader(self, client_id):
-        if client_id in self.available_clients:
+        if client_id in self.available_clients_set:
             return SOClientDataloader(
                 self.tf_fed_dataset.create_tf_dataset_for_client(client_id),
                 self.tokenize_fn, self.batch_size, self.max_num_elements_per_client, 
@@ -256,3 +259,24 @@ def get_tokenizer_fn_and_nonvocab_tokens(
         return tf.concat([[bos], tokens], 0)
 
     return tokenize_fn, [special_tokens.pad, *special_tokens.oov, bos, eos]
+
+def load_so_word_counts(data_dir):
+    # https://github.com/tensorflow/federated/issues/1593
+    loaded = False
+    vocab_dict = None
+    for i in range(4):
+        if loaded:
+            return vocab_dict
+        try:
+            vocab_dict = tff.simulation.datasets.stackoverflow.load_word_counts(cache_dir=data_dir)
+            loaded = True
+        except ValueError:
+            import random
+            t = random.randint(0, 100)
+            print(f'Failed on the trying {i+1}/5. Sleeping for {t} seconds and trying again.')
+            time.sleep(t)
+            continue
+    if loaded:
+        return vocab_dict
+    else:  # last try
+       return tff.simulation.datasets.stackoverflow.load_word_counts(cache_dir=data_dir)

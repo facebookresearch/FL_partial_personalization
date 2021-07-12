@@ -2,10 +2,12 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn.functional import softmax, relu
+from torchinfo import summary
 
 class TransformerBlock(nn.Module):
     def __init__(self, num_attn_heads, input_dim, attn_hidden_dim, fc_hidden_dim, dropout=0.):
         super(TransformerBlock, self).__init__()
+        self.input_dim = input_dim
         self.k = attn_hidden_dim
         self.num_heads = num_attn_heads
 
@@ -24,7 +26,10 @@ class TransformerBlock(nn.Module):
         self.layernorm2 = nn.LayerNorm(input_dim)
         self.dropout2 = nn.Dropout(dropout)
 
-        # print('Using custom initialization!')
+        self.use_adapter = False
+        self.adapter1 = False
+        self.adapter2 = False
+
         nn.init.normal_(self.wq.weight, 0, .02)
         nn.init.normal_(self.wk.weight, 0, .02)
         nn.init.normal_(self.wv.weight, 0, .02)
@@ -42,19 +47,61 @@ class TransformerBlock(nn.Module):
         query = self.wq(x).contiguous().view(seq_len, batch_size * self.num_heads, self.k).transpose(0, 1)  # (seq_len, B*H, k)
         key  = self.wk(x).contiguous().view(seq_len, batch_size * self.num_heads, self.k).transpose(0, 1)  # (seq_len, B*H, k)
         value = self.wv(x).contiguous().view(seq_len, batch_size * self.num_heads, self.k).transpose(0, 1) # (seq_len, B*H, k)
+        # Apply attention
         alpha = torch.bmm(query, key.transpose(1, 2)) + mask  # (seq_len, B*H, B*H)
         alpha = softmax(alpha / math.sqrt(self.k), dim=-1)  # (seq_len, B*H, B*H)
         alpha = self.dropout_attn(alpha)  # (seq_len, B*H, B*H)
         u = torch.bmm(alpha, value)  # (seq_len, B*H, k)
         u = u.transpose(0, 1).contiguous().view(seq_len, batch_size, self.num_heads*self.k)   # (seq_len, B, H*k)
-        u = self.layernorm1(x + self.dropout1(self.wc(u)))  # (seq_len, B, d)
-        z = self.w2(self.dropoutfc(relu(self.w1(u))))  # (seq_len, B, d)
-        z = self.layernorm2(u + self.dropout2(z))
+        # Apply first FC (post-attention)
+        u = self.dropout1(self.wc(u))  # (seq_len, B, d)
+        # Apply adapter if necessary
+        if self.use_adapter:
+            u = self.adapter1(u)  # (seq_len, B, d)
+        # Apply skip connection
+        u = x + u  # (seq_len, B, d)
+        # Apply layer norm
+        u = self.layernorm1(u)  # (seq_len, B, d)
+        # Apply FC x 2
+        z = self.dropout2(self.w2(self.dropoutfc(relu(self.w1(u)))))  # (seq_len, B, d)
+        # Apply adapter if necessary
+        if self.use_adapter:
+            u = self.adapter2(u)  # (seq_len, B, d)
+        # Apply skip connection
+        z = u + z  # (seq_len, B, d)
+        # Apply layer norm
+        z = self.layernorm2(z)
         return z  # (seq_len, B, d)
+
+    def add_adapters(self, adapter_hidden_dim):
+        if not self.use_adapter:
+            self.use_adapter = True
+            self.adapter1 = AdapterBlock(self.input_dim, adapter_hidden_dim)
+            self.adapter2 = AdapterBlock(self.input_dim, adapter_hidden_dim)
+
+class AdapterBlock(nn.Module):
+    def __init__(self, input_dim, adapter_hidden_dim):
+        super().__init__()
+        self.linear1 = nn.Linear(input_dim, adapter_hidden_dim)
+        self.linear2 = nn.Linear(adapter_hidden_dim, input_dim)
+        # initialize weights to a small constant
+        for module in [self.linear1, self.linear2]:
+            nn.init.normal_(module.weight, 0, .01)
+            nn.init.constant_(module.bias, 0.0)
+
+    def forward(self, x): # x: (seq_len, B, d)
+        # down-project
+        u = relu(self.linear1(x))  # (seq_len, B, h)
+        # up-project
+        u = self.linear2(u)  # (seq_len, B, d)
+        # skip connection
+        u = x + u
+        return u
+
 
 class Transformer(nn.Module):
     def __init__(self, seq_len, vocab_size, input_dim, attn_hidden_dim, fc_hidden_dim,
-                 num_attn_heads, num_layers, tied_weights=False, dropout_tr=0., dropout_io=0.
+                 num_attn_heads, num_layers, tied_weights=False, dropout_tr=0., dropout_io=0.,
     ):
         super(Transformer, self).__init__()
         print(f"""Constructing a transformer model with:
@@ -84,7 +131,8 @@ class Transformer(nn.Module):
         for i in range(num_layers):
             self.transformer.append(TransformerBlock(num_attn_heads, input_dim, attn_hidden_dim, fc_hidden_dim, dropout_tr))
 
-        if not tied_weights: self.decoder = nn.Linear(input_dim, vocab_size)
+        if not tied_weights:  # output layer
+            self.decoder = nn.Linear(input_dim, vocab_size, bias=False)  # bias vector below
         self.drop_o = nn.Dropout(dropout_io)
         self.bias = nn.Parameter(torch.ones(vocab_size))
 
@@ -109,6 +157,66 @@ class Transformer(nn.Module):
 
         z = self.drop_o(z)
         outputs = torch.matmul(z, self.word_embedding.weight.t()) if self.tied_weights else self.decoder(z)
-        # return log_softmax(outputs + self.bias, dim=-1)
         return outputs + self.bias  # pre-softmax weights
 
+    def print_summary(self, train_batch_size):
+        device = next(self.parameters()).device
+        print(summary(self, input_size=(self.seq_len, train_batch_size), 
+                      dtypes=[torch.int64], device=device))
+
+    def load_pretrained_and_prepare(self, state_dict, train_mode, layers_to_finetune, adapter_hidden_dim):
+        assert train_mode in ['train', 'finetune', 'finetune_tr_layer', 
+                              'finetune_inp_layer', 'finetune_out_layer',
+                              'adapter', 'prefix']
+        # load state_dict 
+        self.load_state_dict(state_dict, strict=False)
+
+        # Untie weights for IO layers if required
+        if self.tied_weights and train_mode in ['finetune_inp_layer', 'finetune_out_layer']:
+            self.tied_weights = False
+            self.decoder = nn.Linear(*self.word_embedding.weight.t().shape, bias=False) # hidden dim -> vocab size
+            with torch.no_grad():  # initialize with word embedding
+                self.decoder.weight.copy_(self.word_embedding.weight)
+            if train_mode in ['finetune_inp_layer']:  
+                # finetune only the word embedding
+                self.decoder.weight.requires_grad_(False)
+                self.word_embedding.weight.requires_grad_(True)
+            elif train_mode in ['finetune_out_layer']:
+                # finetune only the linear layer
+                self.decoder.weight.requires_grad_(True)
+                self.word_embedding.weight.requires_grad_(False)
+
+        if layers_to_finetune is None:  # do not fine tune
+            layers_to_finetune = []
+        if train_mode == 'finetune_tr_layer' and len(layers_to_finetune) is None:
+            raise ValueError(f'No transformer layers to finetune. Nothing to do')
+
+        # Set requires_grad based on `train_mode`
+        if train_mode in ['train', 'finetune']:  # all parameters are to be tuned
+            def do_finetune(name):
+                return True
+        elif 'finetune_tr_layer' in train_mode:
+            # Finetune a specific transformer layer
+            def do_finetune(name):
+                return any([f'transformer.{i}' in name for i in layers_to_finetune])
+        elif train_mode in ['finetune_inp_layer']:
+            # Fine tune positional and word embeddings
+            def do_finetune(name):
+                return ('embedding' in name)
+        elif train_mode in ['finetune_out_layer']:
+            # Fine tune final linear layer
+            def do_finetune(name):
+                return ('bias' == name) or ('decoder' in name)
+        elif train_mode in ['adapter']:
+            # Train adapter modules
+            def do_finetune(name):
+                return ('adapter' in name) or ('layernorm' in name)
+            # Add adapter modules
+            for block in self.transformer:
+                block.add_adapters(adapter_hidden_dim)
+        else:
+            raise ValueError(f'Unknown train_mode: {train_mode}')
+
+        # set requires_grad for those parameters which need to be modified
+        for name, param in self.named_parameters():
+            param.requires_grad_(do_finetune(name))

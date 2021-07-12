@@ -41,7 +41,8 @@ class EmnistFederatedDataloader(FederatedDataloader):
         elif type(client_list) != list or len(client_list) <= 1:
             raise ValueError(f'Stack Overflow dataset requires the list of clients to be specified.')
         if client_list is not None:
-            self.available_clients = set(client_list)
+            self.available_clients_set = set(client_list)
+            self.available_clients = client_list
         self.batch_size = batch_size
         self.max_num_elements_per_client = max_num_elements_per_client
         self.shuffle = shuffle
@@ -70,7 +71,7 @@ class EmnistFederatedDataloader(FederatedDataloader):
         print(f'Loaded data in {round(time.time() - start_time, 2)} seconds')
 
     def get_client_dataloader(self, client_id):
-        if client_id in self.available_clients:
+        if client_id in self.available_clients_set:
             return EmnistClientDataloader(
                 self.tf_fed_dataset.create_tf_dataset_for_client(client_id),
                 self.mean, self.std, self.batch_size, 
