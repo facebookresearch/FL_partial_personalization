@@ -208,7 +208,7 @@ class Transformer(nn.Module):
             def do_finetune(name):
                 return ('bias' == name) or ('decoder' in name)
         elif train_mode in ['adapter']:
-            # Train adapter modules
+            # Train adapter modules (+ batch norm)
             def do_finetune(name):
                 return ('adapter' in name) or ('layernorm' in name)
             # Add adapter modules

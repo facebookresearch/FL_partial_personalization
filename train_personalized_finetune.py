@@ -89,9 +89,11 @@ def main():
 def finetune_for_one_client(args, pretrained_model, trainloader, testloader, loss_fn, metrics_fn, device):
     # copy model (do not modify original one)
     model = copy.deepcopy(pretrained_model).to(device) 
-    print('Epoch|Train Loss|Train Acc.|Test Loss|Test Acc.')
+    optimizer, scheduler = pfl.utils.setup_personalized_optimizer_from_args(args, model)
 
     # log
+    print('Epoch|Train Loss|Train Acc.|Test Loss|Test Acc.|LR')
+
     def _log(epoch, metrics_dict, dataloader, is_test):
         is_train = model.training
         model.eval()
@@ -100,7 +102,7 @@ def finetune_for_one_client(args, pretrained_model, trainloader, testloader, los
         if is_train:
             model.train()
         if is_test:
-            print(f'{metrics["loss"]:.2f}\t{metrics["accuracy"]:.4f}')
+            print(f'{metrics["loss"]:.2f}\t{metrics["accuracy"]:.4f}\t{optimizer.param_groups[0]["lr"]:.2g}')
         else:
             print(f'{epoch: 2d}\t{metrics["loss"]:.2f}\t{metrics["accuracy"]:.4f}', end='\t\t')
         return size
@@ -109,8 +111,6 @@ def finetune_for_one_client(args, pretrained_model, trainloader, testloader, los
     test_metrics = OrderedDict()
     train_size = _log(0, train_metrics, trainloader, is_test=False)
     test_size = _log(0, test_metrics, testloader, is_test=True)
-
-    optimizer, scheduler = pfl.utils.setup_personalized_optimizer_from_args(args, model)
 
     num_updates = 0
     for epoch in range(1000):  # maximum number of epochs on local data

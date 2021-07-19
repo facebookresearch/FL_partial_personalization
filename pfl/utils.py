@@ -98,9 +98,11 @@ def make_finetune_parser():
     parser.add_argument('--lr', type=float, default=3.5e-4)
     parser.add_argument('--max_num_clients_for_personalization', type=int, default=100)
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
-    parser.add_argument('--scheduler', type=str, default='const', choices=['const', 'linear', 'expo'])
+    parser.add_argument('--scheduler', type=str, default='const',
+                        choices=['const', 'linear', 'expo', 'const_and_cut'])
     parser.add_argument('--warmup_fraction', type=float, default=0.1) # for linear schedule
-    parser.add_argument('--decay_factor', type=float, default=0.1) # final decay factor for exponential decay
+    parser.add_argument('--lr_decay_factor', type=float, default=0.1) # final decay factor for exponential decay
+    parser.add_argument('--lr_decay_every', type=int, default=100)  # how often to decay lr
     parser.add_argument('--num_updates_personalization', type=int, default=100)
     # Model args
     # TODO: save args from pretrained model to load these from there
@@ -177,7 +179,11 @@ def setup_personalized_optimizer_from_args(args, model):
             )
     elif args.scheduler == 'expo':
         def lr_lambda(current_step):
-            return max(1.0, args.decay_factor) ** (current_step / num_training_steps)
+            return min(1.0, max(0.0, args.lr_decay_factor)) ** (current_step / num_training_steps)
+    elif args.scheduler == 'const_and_cut':
+        def lr_lambda(current_step):
+            factor = current_step // args.lr_decay_every
+            return args.lr_decay_factor ** factor
     scheduler = LambdaLR(optimizer, lr_lambda)
 
     return optimizer, scheduler
