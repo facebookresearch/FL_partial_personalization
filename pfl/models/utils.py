@@ -2,6 +2,7 @@ import torch
 from .transformer import Transformer
 from .emnist_convnet import EmnistConvNet
 from .emnist_resnet import EmnistResNet
+from .emnist_resnet_gn import EmnistResNetGN
 
 def get_model_from_args(args, device):
     summary_args = dict(device=device)
@@ -12,6 +13,9 @@ def get_model_from_args(args, device):
         elif args.model_name in ['resnet']:
             print('Running EMNIST with ResNet18')
             model = EmnistResNet()
+        elif args.model_name in ['resnet_gn']:
+            print('Running EMNIST with ResNet18 w/ group norm')
+            model = EmnistResNetGN()
     elif args.dataset == 'stackoverflow':
         total_vocab_size = args.vocab_size + args.num_oov_buckets + 3  # add pad, bos, eos
         model = Transformer(
