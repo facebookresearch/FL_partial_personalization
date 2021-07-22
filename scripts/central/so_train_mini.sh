@@ -28,15 +28,7 @@ savedir="/checkpoint/pillutla/pfl/saved_models"
 
 name="so_mini_try1"
 save_params=" --logfilename ${logdir}/${name} --savefilename ${savedir}/${name}.pt"
-arch_params="\
-            --num_attn_heads 4 \
-            --num_transformer_layers 4 \
-            --input_dim 256 \
-            --attn_hidden_dim 64 \
-            --fc_hidden_dim 1024 \
-            --dropout_tr 0 \
-            --dropout_io 0 \
-            "
+arch_params="--arch_size mini"
 log_params="\
             --max_num_clients_for_logging 100 \
             --log_train_every_n_clients 1000 \

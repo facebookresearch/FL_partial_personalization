@@ -21,6 +21,66 @@ def tf_hide_other_gpus(device_id):
     except: # Invalid device or cannot modify virtual devices once initialized.
         pass
 
+def make_pfl_train_parser():
+    parser = argparse.ArgumentParser()
+    # General arguments
+    parser.add_argument('--data_dir', type=str, default='/checkpoint/pillutla/data')
+    parser.add_argument('--dataset', type=str, required=True,
+                        choices=['emnist', 'stackoverflow'])
+    parser.add_argument('--max_num_elements_per_client', type=int, default=1000)
+    parser.add_argument('--device', type=int, default=0)
+    parser.add_argument('--seed', type=int, default=0)
+    # parser.add_argument('--savefilename', type=str, default='./saved_models/model.pt')
+    parser.add_argument('--savedir', type=str, default='./saved_models/pfl')
+    parser.add_argument('--logfilename', type=str, default='./logs/out')
+
+    # Logging Arguments
+    log_parser = parser.add_argument_group('log_args', 'Logging Arguments')
+    # log_parser.add_argument('--log_train', action='store_true')  # if specified, also log training stats
+    log_parser.add_argument('--max_num_clients_for_logging', type=int, default=2000)
+    log_parser.add_argument('--log_train_every_n_rounds', type=int, default=10)
+    log_parser.add_argument('--log_test_every_n_rounds', type=int, default=50)
+
+    # Federated Training Arugments
+    fed_parser = parser.add_argument_group('train_args', 'Model training args')
+    fed_parser.add_argument('--pfl_algo', type=str, required=True, choices=['fedavg'])
+    fed_parser.add_argument('--client_optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
+    fed_parser.add_argument('--server_optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
+    fed_parser.add_argument('--num_communication_rounds', type=int, default=1000)
+    fed_parser.add_argument('--num_clients_per_round', type=int, default=10)
+    fed_parser.add_argument('--num_local_epochs', type=int, default=1)
+    fed_parser.add_argument('--train_batch_size', type=int, default=32)
+    fed_parser.add_argument('--eval_batch_size', type=int)  # if not specified use train_batch_size
+    # LR scheduling within local iterations
+    fed_parser.add_argument('--client_lr', type=float, default=3.5e-4)
+    fed_parser.add_argument('--client_lr_decay_factor', type=float, default=1.0)  # <= 1
+    fed_parser.add_argument('--client_lr_decay_every', type=int, default=100)  # how many epochs to decay lr
+    fed_parser.add_argument('--client_scheduler', type=str, default='const',
+                            choices=['const', 'linear', 'expo', 'const_and_cut'])
+    fed_parser.add_argument('--local_warmup_fraction', type=float, default=0.1)
+    # LR scheduling to figure out effective client_lr
+    fed_parser.add_argument('--global_lr_decay_factor', type=float, default=1.0)  # <= 1
+    fed_parser.add_argument('--global_lr_decay_every', type=int, default=100)  # how many rounds to decay lr
+    fed_parser.add_argument('--global_scheduler', type=str, default='const',
+                            choices=['const', 'linear', 'expo', 'const_and_cut'])
+    fed_parser.add_argument('--global_warmup_fraction', type=float, default=0.1)
+
+    fed_parser.add_argument('--server_lr', type=float, default=1.0)
+    fed_parser.add_argument('--server_momentum', type=float, default=0.0)
+
+    # Model-specific Arguments
+    model_parser = parser.add_argument_group('model_args', 'Model args')
+    model_parser.add_argument('--model_name', type=str)
+    model_parser.add_argument('--max_sequence_length', type=int, default=20)
+    model_parser.add_argument('--vocab_size', type=int, default=10000)
+    model_parser.add_argument('--num_oov_buckets', type=int, default=1)
+    model_parser.add_argument('--arch_size', type=str, default='tiny')
+    model_parser.add_argument('--max_grad_norm', type=float, default=0.25)
+    model_parser.add_argument('--clip_grad_norm', action='store_true')  # If true, clip grad norm
+    model_parser.add_argument('--num_warmup_rounds', type=int, default=10)  # federated setting
+
+    return parser
+
 def make_train_parser():
     parser = argparse.ArgumentParser()
     # General arguments
@@ -38,12 +98,8 @@ def make_train_parser():
     # log_parser.add_argument('--log_train', action='store_true')  # if specified, also log training stats
     log_parser.add_argument('--max_num_clients_for_logging', type=int, default=2000)
 
-    # Federated Training Arugments
+    # Training Arugments 1
     fed_parser = parser.add_argument_group('train_args', 'Model training args')
-    fed_parser.add_argument('--client_optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
-    fed_parser.add_argument('--server_optimizer', type=str, default='sgd', choices=['sgd'])
-    fed_parser.add_argument('--num_communication_rounds', type=int, default=100)
-    fed_parser.add_argument('--num_local_epochs', type=int, default=1)
     fed_parser.add_argument('--train_batch_size', type=int, default=32)
     fed_parser.add_argument('--eval_batch_size', type=int)  # if not specified use train_batch_size
     fed_parser.add_argument('--lr', type=float, default=3.5e-4)
@@ -63,18 +119,11 @@ def make_train_parser():
     model_parser.add_argument('--max_sequence_length', type=int, default=20)
     model_parser.add_argument('--vocab_size', type=int, default=10000)
     model_parser.add_argument('--num_oov_buckets', type=int, default=1)
-    model_parser.add_argument('--num_attn_heads', type=int, default=10)
-    model_parser.add_argument('--num_transformer_layers', type=int, default=16)
-    model_parser.add_argument('--input_dim', type=int, default=400)
-    model_parser.add_argument('--attn_hidden_dim', type=int, default=40)
-    model_parser.add_argument('--fc_hidden_dim', type=int, default=900)
+    model_parser.add_argument('--arch_size', type=str, default='tiny')
     model_parser.add_argument('--max_grad_norm', type=float, default=0.25)
-    model_parser.add_argument('--dropout_tr', type=float, default=0.2)
-    model_parser.add_argument('--dropout_io', type=float, default=0.6)
     model_parser.add_argument('--warmup_lr', type=float, default=1e-4)
     model_parser.add_argument('--use_warmup', action='store_true')  # use LR warmup
     model_parser.add_argument('--num_warmup_updates', type=float, default=5000)   # centralized setting
-    model_parser.add_argument('--num_warmup_rounds', type=int, default=10)  # federated setting
 
     return parser
 
@@ -104,6 +153,8 @@ def make_finetune_parser():
     parser.add_argument('--lr_decay_factor', type=float, default=0.1) # final decay factor for exponential decay
     parser.add_argument('--lr_decay_every', type=int, default=100)  # how often to decay lr
     parser.add_argument('--num_updates_personalization', type=int, default=100)
+    parser.add_argument('--num_epochs_personalization', type=int, default=2)
+    parser.add_argument('--use_epochs_for_personalization', action='store_true')
     # Model args
     # TODO: save args from pretrained model to load these from there
     model_parser = parser.add_argument_group('model_args', 'Model args')
@@ -111,16 +162,42 @@ def make_finetune_parser():
     model_parser.add_argument('--max_sequence_length', type=int, default=20)
     model_parser.add_argument('--vocab_size', type=int, default=10000)
     model_parser.add_argument('--num_oov_buckets', type=int, default=1)
-    model_parser.add_argument('--num_attn_heads', type=int, default=10)
-    model_parser.add_argument('--num_transformer_layers', type=int, default=16)
-    model_parser.add_argument('--input_dim', type=int, default=400)
-    model_parser.add_argument('--attn_hidden_dim', type=int, default=40)
-    model_parser.add_argument('--fc_hidden_dim', type=int, default=900)
+    model_parser.add_argument('--arch_size', type=str, default='tiny')
     model_parser.add_argument('--max_grad_norm', type=float, default=0.25)
-    model_parser.add_argument('--dropout_tr', type=float, default=0.2)
-    model_parser.add_argument('--dropout_io', type=float, default=0.6)
 
     return parser
+
+def update_arch_params_from_arch_size(args):
+    if args.dataset != 'stackoverflow':
+        return
+    if args.arch_size == 'tiny':
+        args.num_attn_heads = 2
+        args.num_transformer_layers = 2
+        args.input_dim = 128
+        args.attn_hidden_dim = 64
+        args.fc_hidden_dim = 512
+    elif args.arch_size == 'mini':
+        args.num_attn_heads = 4
+        args.num_transformer_layers = 4
+        args.input_dim = 256
+        args.attn_hidden_dim = 64
+        args.fc_hidden_dim = 1024
+    elif args.arch_size == 'medium':
+        args.num_attn_heads = 8
+        args.num_transformer_layers = 8
+        args.input_dim = 512
+        args.attn_hidden_dim = 64
+        args.fc_hidden_dim = 2048
+    elif args.arch_size == 'base':
+        args.num_attn_heads = 12
+        args.num_transformer_layers = 12
+        args.input_dim = 768
+        args.attn_hidden_dim = 64
+        args.fc_hidden_dim = 1536
+    else:
+        raise ValueError(f'Unknown arch size: {args.arch_size}')
+    args.dropout_tr = 0
+    args.dropout_io = 0
 
 def setup_centralized_optimizer_from_args(args, model, use_warmup=False):
     lr = args.warmup_lr if use_warmup else args.lr
@@ -145,19 +222,35 @@ def adjust_optimizer_centralized_(args, optimizer, epoch, num_clients_processed)
         for g in optimizer.param_groups:
             g['lr'] /= args.lr_decay_factor
 
-def adjust_optimizer_federated_(args, optimizer, round):
-    if (args.use_warmup and 
-        optimizer.param_groups[0]['lr'] == args.warmup_lr and
-        round >= args.num_warmup_rounds
-    ):  # warmup completed
-        for g in optimizer.param_groups:
-            g['lr'] = args.lr
-    elif round > 1 and round % args.lr_decay_every == 0:
-        # decay LR
-        for g in optimizer.param_groups:
-            g['lr'] /= args.lr_decay_factor
+def get_fed_global_lr_scheduler(num_communication_rounds, optimizer_args):
+    """Get a scheduler for the maximum client learning rate
+        optimizer_args: scheduler, warmup_fraction, lr_decay_factor, lr_decay_every
+    Returns:
+        Callable: current_round -> lr_mulitplier
+    """
+    # optimizer_args: scheduler, lr_decay_factor, lr_decay_every, warmup_fraction
+    if optimizer_args.scheduler == 'const':
+        lr_lambda = lambda current_step: 1.0  # mult. factor = 1.0
+    elif optimizer_args.scheduler == 'linear':
+        num_warmup_steps = optimizer_args.warmup_fraction * num_communication_rounds
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                return current_step / max(1.0, num_warmup_steps)
+            return max(0.0, 
+                (num_communication_rounds - current_step) / 
+                max(1.0, num_communication_rounds - num_warmup_steps)
+            )
+    elif optimizer_args.scheduler == 'expo':
+        def lr_lambda(current_step):
+            return min(1.0, max(0.0, optimizer_args.lr_decay_factor)) ** (current_step / num_communication_rounds)
+    elif optimizer_args.scheduler == 'const_and_cut':
+        def lr_lambda(current_step):
+            factor = current_step // optimizer_args.lr_decay_every
+            return optimizer_args.lr_decay_factor ** factor
 
-def setup_personalized_optimizer_from_args(args, model):
+    return lr_lambda
+
+def setup_personalized_optimizer_from_args(args, model, num_training_steps):
     if args.optimizer == 'sgd':
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
     elif args.optimizer == 'adam':
@@ -165,7 +258,6 @@ def setup_personalized_optimizer_from_args(args, model):
     else:
         raise ValueError(f'Unknown optimizer: {args.optimizer}')
     # Setup scheduler
-    num_training_steps = args.num_updates_personalization
     if args.scheduler == 'const':
         lr_lambda = lambda current_step: 1.0  # mult. factor = 1.0
     elif args.scheduler == 'linear':

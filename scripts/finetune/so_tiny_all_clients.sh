@@ -29,15 +29,7 @@ model_size="tiny"
 logdir="/checkpoint/pillutla/pfl/outputs"
 modelfilename="/checkpoint/pillutla/pfl/saved_models/so_${model_size}_try1.pt"
 
-arch_params="\
-            --num_attn_heads 2 \
-            --num_transformer_layers 2 \
-            --input_dim 128 \
-            --attn_hidden_dim 64 \
-            --fc_hidden_dim 512 \
-            --dropout_tr 0 \
-            --dropout_io 0 \
-            "
+arch_params="--arch_size tiny"
 train_params="\
             --train_batch_size 32 \
             --eval_batch_size 1024 \

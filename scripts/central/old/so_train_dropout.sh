@@ -3,7 +3,8 @@
 #SBATCH --job-name=train
 #SBATCH --comment="Train SO"
 #SBATCH --partition=learnfair
-#SBATCH --output=/checkpoint/pillutla/pfl/outs/%A.out
+#SBATCH --array=0-15  # TODO: count
+#SBATCH --output=/checkpoint/pillutla/pfl/outs/%A_%a.out
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=40G
@@ -26,9 +27,13 @@ set -exu
 logdir="/checkpoint/pillutla/pfl/outputs"
 savedir="/checkpoint/pillutla/pfl/saved_models"
 
-name="so_tiny_try1"
-save_params=" --logfilename ${logdir}/${name} --savefilename ${savedir}/${name}.pt"
-arch_params="--arch_size tiny"
+arch_params="\
+            --num_attn_heads 2 \
+            --num_transformer_layers 2 \
+            --input_dim 128 \
+            --attn_hidden_dim 64 \
+            --fc_hidden_dim 512 \
+            "
 log_params="\
             --max_num_clients_for_logging 100 \
             --log_train_every_n_clients 1000 \
@@ -42,11 +47,36 @@ train_params="\
             --num_epochs_centralized 2 \
         "
 
+common_args="${arch_params} ${log_params} ${train_params}"
+
+
+# Populate the array
+list_of_jobs=()
+for do_tr in 0 0.1 0.2 0.3
+do
+for do_io in 0 0.1 0.2 0.3
+do
+name="so_tiny_dotr${do_tr}_doio${do_io}"
+job=" --logfilename ${logdir}/${name} --savefilename ${savedir}/${name}.pt \
+         --dropout_tr ${do_tr} --dropout_io ${do_io} "
+
+list_of_jobs+=("${job}")
+done
+done
+
+# Run
+num_jobs=${#list_of_jobs[@]}
+job_id=${SLURM_ARRAY_TASK_ID}
+if [ ${job_id} -ge ${num_jobs} ] ; then
+    echo "Invalid job id; qutting"
+    exit 2
+fi
+echo "-------- STARTING JOB ${job_id}/${num_jobs}"
+args=${list_of_jobs[${job_id}]}
+
 time python -u train_centralized.py \
             --dataset stackoverflow \
-            ${train_params}  \
-            ${log_params}  \
-            ${arch_params}  \
-            ${save_params} 
+            ${common_args} \
+            ${job}
 
 echo "Job completed at $(date)"

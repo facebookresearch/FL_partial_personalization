@@ -4,12 +4,12 @@
 #SBATCH --comment="Finetune SO"
 #SBATCH --partition=learnfair
 #SBATCH --output=/checkpoint/pillutla/pfl/outs/%A_%a.out
-#SBATCH --array=0-12  # TODO: count
+#SBATCH --array=0-5  # TODO: count
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=40G
 #SBATCH --gres=gpu:1
-#SBATCH --time=24:00:00
+#SBATCH --time=1:00:00
 #SBATCH --open-mode=append
 #SBATCH --signal=B:USR1@600
 
@@ -23,14 +23,19 @@ echo "python path = $(which python)"
 
 set -exu
 
-model_size="mini"
-
 # Default arguments
 logdir="/checkpoint/pillutla/pfl/outputs"
-modelfilename="/checkpoint/pillutla/pfl/saved_models/so_${model_size}_try1.pt"
+modelfilename="/checkpoint/pillutla/pfl/saved_models/so_tiny_try1.pt"
 
-arch_params="--arch_size mini"
-
+arch_params="\
+            --num_attn_heads 2 \
+            --num_transformer_layers 2 \
+            --input_dim 128 \
+            --attn_hidden_dim 64 \
+            --fc_hidden_dim 512 \
+            --dropout_tr 0 \
+            --dropout_io 0 \
+            "
 train_params="\
             --train_batch_size 32 \
             --eval_batch_size 1024 \
@@ -41,33 +46,22 @@ train_params="\
 common_params="\
             --num_updates_personalization 100 \
             --modelfilename ${modelfilename} \
-            --max_num_clients_for_personalization 1000 \
         "
 
 list_of_jobs=()
 for train_mode in "finetune" "finetune_inp_layer" "finetune_out_layer"
 do
-    name="so_${model_size}_try1_${train_mode}"
+    name="so_tiny_try1_${train_mode}"
     task_params="--train_mode ${train_mode} --logfilename ${logdir}/${name}"
     list_of_jobs+=("${task_params}")
 done
 
-# finetune 
 train_mode="finetune_tr_layer"
-for layers in "0 1" "2 3" "0 1 2 3" 
+for layers in "0" "1" "0 1" 
 do
     l2=`echo ${layers} | sed 's/ /+/g'`
-    name="so_${model_size}_try1_${train_mode}_${l2}"
+    name="so_tiny_try1_${train_mode}_${l2}"
     task_params="--train_mode ${train_mode} --layers_to_finetune ${layers} --logfilename ${logdir}/${name}"
-    list_of_jobs+=("${task_params}")
-done
-
-# adapter
-train_mode="adapter"
-for hidden_dim in 2 4 8 16 32 64 128
-do
-    name="so_${model_size}_try1_${train_mode}_${hidden_dim}"
-    task_params="--train_mode ${train_mode} --adapter_hidden_dim ${hidden_dim} --logfilename ${logdir}/${name}"
     list_of_jobs+=("${task_params}")
 done
 

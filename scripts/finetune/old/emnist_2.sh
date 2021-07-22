@@ -1,15 +1,15 @@
 #!/bin/bash
 
 #SBATCH --job-name=train
-#SBATCH --comment="Finetune SO"
+#SBATCH --comment="Finetune EMNIST"
 #SBATCH --partition=learnfair
 #SBATCH --output=/checkpoint/pillutla/pfl/outs/%A_%a.out
-#SBATCH --array=0-12  # TODO: count
+#SBATCH --array=0  # TODO: count
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=40G
 #SBATCH --gres=gpu:1
-#SBATCH --time=24:00:00
+#SBATCH --time=13:00:00
 #SBATCH --open-mode=append
 #SBATCH --signal=B:USR1@600
 
@@ -23,53 +23,34 @@ echo "python path = $(which python)"
 
 set -exu
 
-model_size="mini"
-
 # Default arguments
 logdir="/checkpoint/pillutla/pfl/outputs"
-modelfilename="/checkpoint/pillutla/pfl/saved_models/so_${model_size}_try1.pt"
+modelfilename="/checkpoint/pillutla/pfl/saved_models/emnist_resnet.pt"
 
-arch_params="--arch_size mini"
-
+# lr = final learning rate at the end of centralized training 
 train_params="\
             --train_batch_size 32 \
-            --eval_batch_size 1024 \
-            --optimizer adam \
-            --scheduler linear \
-            --lr 3.5e-4 \
+            --eval_batch_size 256 \
+            --optimizer sgd \
+            --scheduler const_and_cut \
+            --lr 5e-4 \
+            --lr_decay_factor 0.5 \
+            --lr_decay_every 25
         "
 common_params="\
             --num_updates_personalization 100 \
             --modelfilename ${modelfilename} \
-            --max_num_clients_for_personalization 1000 \
+            --max_num_clients_for_personalization 1114 \
         "
 
 list_of_jobs=()
-for train_mode in "finetune" "finetune_inp_layer" "finetune_out_layer"
+for train_mode in "adapter"
 do
-    name="so_${model_size}_try1_${train_mode}"
+    name="emnist_${train_mode}"
     task_params="--train_mode ${train_mode} --logfilename ${logdir}/${name}"
     list_of_jobs+=("${task_params}")
 done
 
-# finetune 
-train_mode="finetune_tr_layer"
-for layers in "0 1" "2 3" "0 1 2 3" 
-do
-    l2=`echo ${layers} | sed 's/ /+/g'`
-    name="so_${model_size}_try1_${train_mode}_${l2}"
-    task_params="--train_mode ${train_mode} --layers_to_finetune ${layers} --logfilename ${logdir}/${name}"
-    list_of_jobs+=("${task_params}")
-done
-
-# adapter
-train_mode="adapter"
-for hidden_dim in 2 4 8 16 32 64 128
-do
-    name="so_${model_size}_try1_${train_mode}_${hidden_dim}"
-    task_params="--train_mode ${train_mode} --adapter_hidden_dim ${hidden_dim} --logfilename ${logdir}/${name}"
-    list_of_jobs+=("${task_params}")
-done
 
 # Run
 num_jobs=${#list_of_jobs[@]}
@@ -82,10 +63,10 @@ echo "-------- STARTING JOB ${job_id}/${num_jobs}"
 args=${list_of_jobs[${job_id}]}
 
 time python -u train_personalized_finetune.py \
-            --dataset stackoverflow \
+            --dataset emnist \
+            --model_name resnet \
             ${train_params}  \
             ${common_params}  \
-            ${arch_params}  \
             ${args} 
 
 echo "Job completed at $(date)"
