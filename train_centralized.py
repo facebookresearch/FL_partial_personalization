@@ -15,6 +15,7 @@ import pfl.utils, pfl.metrics, pfl.data, pfl.models
 def main():
     parser = pfl.utils.make_train_parser()
     args = parser.parse_args()
+    pfl.utils.update_arch_params_from_arch_size(args)
     print('Args', '-'*50, '\n', args, '\n', '-'*50)
     torch.manual_seed(args.seed)
     tf.random.set_seed(args.seed+1)  # for TFF dataloaders
@@ -104,6 +105,7 @@ def main():
                 loss = loss_fn(yhat, y)
                 avg_loss = 0.99 * avg_loss + 0.01 * loss.item()
                 loss.backward()
+                # TODO: clip grad norm
                 optimizer.step()
             count += 1
 

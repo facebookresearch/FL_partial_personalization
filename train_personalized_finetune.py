@@ -18,6 +18,7 @@ import pfl.utils, pfl.metrics, pfl.data, pfl.models
 def main():
     parser = pfl.utils.make_finetune_parser()
     args = parser.parse_args()
+    pfl.utils.update_arch_params_from_arch_size(args)
     print('Args', '-'*50, '\n', args, '\n', '-'*50)
     torch.manual_seed(args.seed)
     tf.random.set_seed(args.seed+1)  # for TFF dataloaders
@@ -89,7 +90,6 @@ def main():
 def finetune_for_one_client(args, pretrained_model, trainloader, testloader, loss_fn, metrics_fn, device):
     # copy model (do not modify original one)
     model = copy.deepcopy(pretrained_model).to(device) 
-    optimizer, scheduler = pfl.utils.setup_personalized_optimizer_from_args(args, model)
 
     # log
     print('Epoch|Train Loss|Train Acc.|Test Loss|Test Acc.|LR')
@@ -112,9 +112,15 @@ def finetune_for_one_client(args, pretrained_model, trainloader, testloader, los
     train_size = _log(0, train_metrics, trainloader, is_test=False)
     test_size = _log(0, test_metrics, testloader, is_test=True)
 
+    if args.use_epochs_for_personalization:  # Note: This does not work for stack overflow
+        max_num_updates = len(trainloader) * args.num_epochs_personalization 
+    else:
+        max_num_updates = args.num_updates_personalization
+    optimizer, scheduler = pfl.utils.setup_personalized_optimizer_from_args(args, model, max_num_updates)
+
     num_updates = 0
     for epoch in range(1000):  # maximum number of epochs on local data
-        if num_updates >= args.num_updates_personalization:
+        if num_updates >= max_num_updates:
             # done personalization
             break
         for x, y in trainloader:
@@ -123,10 +129,11 @@ def finetune_for_one_client(args, pretrained_model, trainloader, testloader, los
             yhat = model(x)
             loss = loss_fn(yhat, y)
             loss.backward()
+            # TODO: clip grad norm
             optimizer.step()
             scheduler.step()
             num_updates += 1
-            if num_updates >= args.num_updates_personalization:
+            if num_updates >= max_num_updates:
                 # jump directly to logging
                 continue
         _log(epoch+1, train_metrics, trainloader, is_test=False)
