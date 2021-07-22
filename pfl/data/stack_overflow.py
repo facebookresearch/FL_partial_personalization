@@ -13,11 +13,11 @@ from typing import Callable, List, Tuple
 
 import attr
 from functools import partial
+import math
 import numpy as np
 import pandas as pd
 import time
 import tensorflow as tf
-from tensorflow._api.v2 import data
 import tensorflow_federated as tff
 import torch
 
@@ -53,6 +53,10 @@ class SOFederatedDataloader(FederatedDataloader):
         self.max_sequence_length = max_sequence_length
         self.num_oov_buckets = num_oov_buckets
         self.shuffle = shuffle
+
+        sizes_filename = f'dataset_statistics/stackoverflow_client_sizes_{split}.csv'
+        self.client_sizes = pd.read_csv(sizes_filename, index_col=0, squeeze=True, dtype='string').to_dict()
+        self.client_sizes = {k: int(v) for (k, v) in self.client_sizes.items()}  # convert client size to int
         
         print('Loading vocab')
         start_time = time.time()
@@ -80,7 +84,8 @@ class SOFederatedDataloader(FederatedDataloader):
         if client_id in self.available_clients_set:
             return SOClientDataloader(
                 self.tf_fed_dataset.create_tf_dataset_for_client(client_id),
-                self.tokenize_fn, self.batch_size, self.max_num_elements_per_client, 
+                self.tokenize_fn, self.batch_size, self.client_sizes[client_id],
+                self.max_num_elements_per_client, 
                 self.max_sequence_length, self.shuffle
             )
         else:
@@ -106,11 +111,12 @@ class SOFederatedDataloader(FederatedDataloader):
 class SOClientDataloader(ClientDataloader):
     """An iterator which wraps the tf.data iteratator to behave like a PyTorch data loader. 
     """
-    def __init__(self, tf_dataset, tokenize_fn, batch_size,
+    def __init__(self, tf_dataset, tokenize_fn, batch_size, dataset_size,
                  max_elements_per_client=1000, max_sequence_length=20, shuffle=True):
         self.tf_dataset = tf_dataset
         self.tokenize_fn = tokenize_fn
         self.batch_size = batch_size
+        self.dataset_size = min(dataset_size, max_elements_per_client)
         self.max_elements_per_client = max_elements_per_client
         self.max_sequence_length = max_sequence_length
         self.shuffle = shuffle
@@ -143,6 +149,9 @@ class SOClientDataloader(ClientDataloader):
                     # x: (seq_len, batch_size); y: (seq_len, batch_size)
                     .prefetch(tf.data.experimental.AUTOTUNE)
             )
+
+    def __len__(self):
+        return int(math.ceil(self.dataset_size / self.batch_size))
     
     def __iter__(self):  # reintialize each time the iterator is called
         self.reinitialize()
@@ -264,7 +273,7 @@ def load_so_word_counts(data_dir):
     # https://github.com/tensorflow/federated/issues/1593
     loaded = False
     vocab_dict = None
-    for i in range(4):
+    for i in range(9):
         if loaded:
             return vocab_dict
         try:
@@ -272,8 +281,11 @@ def load_so_word_counts(data_dir):
             loaded = True
         except ValueError:
             import random
-            t = random.randint(0, 100)
-            print(f'Failed on the trying {i+1}/5. Sleeping for {t} seconds and trying again.')
+            if i < 5:
+                t = random.randint(0, 100)
+            else:
+                t = random.randint(0, 600)
+            print(f'Failed on the trying {i+1}/10. Sleeping for {t} seconds and trying again.')
             time.sleep(t)
             continue
     if loaded:

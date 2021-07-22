@@ -9,6 +9,7 @@ from collections import OrderedDict
 from typing import Callable, List, Tuple
 
 import attr
+import math
 import numpy as np
 import os
 import pandas as pd
@@ -21,7 +22,7 @@ from . import FederatedDataloader, ClientDataloader
 
 class EmnistFederatedDataloader(FederatedDataloader):
     def __init__(self, data_dir, client_list, split, batch_size, 
-                 max_num_elements_per_client=-1, shuffle=True):
+                 max_num_elements_per_client=1000, shuffle=True):
         """Federated dataloader. Takes a client id and returns the dataloader for that client. 
 
         Args:
@@ -52,12 +53,16 @@ class EmnistFederatedDataloader(FederatedDataloader):
         # pd.DataFrame(mean).to_csv(mean_filename, index=False)
         mean_filename = 'dataset_statistics/emnist_mean.csv'
         std_filename = 'dataset_statistics/emnist_std.csv'
+        sizes_filename = f'dataset_statistics/emnist_client_sizes_{split}.csv'
         if not os.path.isfile(mean_filename):
             raise FileNotFoundError(f'Did not find the precomputed EMNIST mean at {mean_filename}')
         if not os.path.isfile(std_filename):
             raise FileNotFoundError(f'Did not find the precomputed EMNIST std at {std_filename}')
+        if not os.path.isfile(sizes_filename):
+            raise FileNotFoundError(f'Did not find the precomputed EMNIST client sizes at {sizes_filename}')
         self.mean = torch.from_numpy(pd.read_csv(mean_filename).to_numpy().astype(np.float32))
         self.std = torch.from_numpy(pd.read_csv(std_filename).to_numpy().astype(np.float32))
+        self.client_sizes = pd.read_csv(sizes_filename, index_col=0, squeeze=True).to_dict()
         
         print('Loading data')
         start_time = time.time()
@@ -74,7 +79,7 @@ class EmnistFederatedDataloader(FederatedDataloader):
         if client_id in self.available_clients_set:
             return EmnistClientDataloader(
                 self.tf_fed_dataset.create_tf_dataset_for_client(client_id),
-                self.mean, self.std, self.batch_size, 
+                self.mean, self.std, self.batch_size, self.client_sizes[client_id],
                 self.max_num_elements_per_client, self.shuffle
             )
         else:
@@ -97,11 +102,12 @@ class EmnistFederatedDataloader(FederatedDataloader):
 class EmnistClientDataloader(ClientDataloader):
     """An iterator which wraps the tf.data iteratator to behave like a PyTorch data loader. 
     """
-    def __init__(self, tf_dataset, mean, std, batch_size, max_elements_per_client=1000, shuffle=True):
+    def __init__(self, tf_dataset, mean, std, batch_size, dataset_size, max_elements_per_client=1000, shuffle=True):
         self.tf_dataset = tf_dataset
         self.mean = mean
         self.std = std
         self.batch_size = batch_size
+        self.dataset_size = min(dataset_size, max_elements_per_client)  # Number of datapoints in client
         self.max_elements_per_client = max_elements_per_client
         self.shuffle = shuffle
         self.tf_dataset_iterator = None
@@ -125,6 +131,9 @@ class EmnistClientDataloader(ClientDataloader):
                     .batch(self.batch_size)
                     .prefetch(tf.data.experimental.AUTOTUNE)
             )
+
+    def __len__(self):
+        return int(math.ceil(self.dataset_size / self.batch_size))
     
     def __iter__(self):  # reintialize each time the iterator is called
         self.reinitialize()
