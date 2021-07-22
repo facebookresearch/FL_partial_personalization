@@ -63,7 +63,7 @@ class AdapterBlock(nn.Module):
         self.conv = conv1x1(planes, planes)  # 1x1 convolution
         # initialize
         nn.init.normal_(self.conv.weight, 0, 1e-4)
-        nn.init.constant_(self.conv.bias, 0.0)
+        # nn.init.constant_(self.conv.bias, 0.0)  # no bias
 
     def forward(self, x):
         identity = x
