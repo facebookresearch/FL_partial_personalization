@@ -1,9 +1,10 @@
+import copy
 import gc
 import math
 import numpy as np
 import os
 import pandas as pd
-import random
+import sys
 import time
 from datetime import timedelta
 import silence_tensorflow.auto  # pylint: disable=unused-import
@@ -21,7 +22,6 @@ def main():
     print('Args', '-'*50, '\n', args, '\n', '-'*50)
     torch.manual_seed(args.seed+5)
     tf.random.set_seed(args.seed+10)  # for TFF dataloaders
-    rng = random.Random(args.seed+20)
     device = pfl.utils.get_device_from_arg(args.device)
     pfl.utils.tf_hide_other_gpus(args.device)
     print('Using device:', device)
@@ -29,8 +29,15 @@ def main():
 
     # Setup server model
     start_time = time.time()
+    if args.pfl_algo == 'fedavg' and args.personalize_on_client != 'none':
+        raise ValueError('FedAvg requires personalize_on_client = "none"')
     server_model = pfl.models.get_model_from_args(args, device).train()
     server_model.print_summary(args.train_batch_size)
+    server_model.split_server_and_client_params(args.personalize_on_client, args.layers_to_finetune, args.adapter_hidden_dim)
+    if args.pfl_algo != 'fedavg':
+        client_model = copy.deepcopy(server_model).train()
+    else:
+        client_model = None
     print(f'Setup model in', timedelta(seconds=round(time.time() - start_time)))
 
     # Setup dataloaders
@@ -55,12 +62,14 @@ def main():
         warmup_fraction=args.global_warmup_fraction
     )
     global_lr_fn = pfl.utils.get_fed_global_lr_scheduler(args.num_communication_rounds, global_lr_args)
+    available_clients = train_fed_loader.available_clients if args.train_all_clients else test_fed_loader
+    print('Number of training clients for federated training:', len(available_clients))
     pfl_args = dict(
         train_fed_loader=train_fed_loader,
         available_clients=test_fed_loader.available_clients,
         server_model=server_model, 
-        client_model=None,   # FedAvg
-        server_optimizer=args.server_optimizer, 
+        client_model=client_model,
+        server_optimizer=args.server_optimizer,
         server_lr=args.server_lr, 
         server_momentum=args.server_momentum, 
         max_grad_norm=args.max_grad_norm,
@@ -97,6 +106,9 @@ def main():
             optimizer_state_dict=pfl_optim.server_optimizer.state_dict(), 
             round=comm_round)
         torch.save(to_save, f'{args.savedir}/main.pt')
+        if comm_round >= 200 and 'accuracy|mean' in metrics and 0 <= metrics['accuracy|mean'] < 0.0005:
+            print('Exiting since accuracy is very small.')
+            sys.exit(-1)
 
     def _log_train(comm_round, avg_loss):
         nonlocal log_train, start_time
@@ -109,7 +121,6 @@ def main():
               f'time: {timedelta(seconds=round(time.time() - start_time))},',
               f'global time: {timedelta(seconds=round(time.time() - global_start_time))}')
         start_time = time.time()
-
     
     avg_loss = math.log(train_fed_loader.num_classes)  # initialize at random guessing
     _log_test(pfl_optim.server_model, 0)

@@ -23,34 +23,29 @@ def tf_hide_other_gpus(device_id):
 
 def make_pfl_train_parser():
     parser = argparse.ArgumentParser()
-    # General arguments
-    parser.add_argument('--data_dir', type=str, default='/checkpoint/pillutla/data')
-    parser.add_argument('--dataset', type=str, required=True,
-                        choices=['emnist', 'stackoverflow'])
-    parser.add_argument('--max_num_elements_per_client', type=int, default=1000)
-    parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--seed', type=int, default=0)
-    # parser.add_argument('--savefilename', type=str, default='./saved_models/model.pt')
-    parser.add_argument('--savedir', type=str, default='./saved_models/pfl')
-    parser.add_argument('--logfilename', type=str, default='./logs/out')
+    add_common_args(parser)
+    add_model_args(parser)
 
     # Logging Arguments
     log_parser = parser.add_argument_group('log_args', 'Logging Arguments')
     # log_parser.add_argument('--log_train', action='store_true')  # if specified, also log training stats
-    log_parser.add_argument('--max_num_clients_for_logging', type=int, default=2000)
     log_parser.add_argument('--log_train_every_n_rounds', type=int, default=10)
     log_parser.add_argument('--log_test_every_n_rounds', type=int, default=50)
 
+    # PFL Args
+    pfl_parser = parser.add_argument_group('train_args', 'PFL args')
+    pfl_parser.add_argument('--pfl_algo', type=str, required=True, choices=['fedavg'])
+    pfl_parser.add_argument('--personalize_on_client', type=str, default='none')  # how to split/share the model on the client
+    pfl_parser.add_argument('--layers_to_finetune', type=int, nargs='*', default=None)
+    pfl_parser.add_argument('--adapter_hidden_dim', type=int, default=16)
+
     # Federated Training Arugments
     fed_parser = parser.add_argument_group('train_args', 'Model training args')
-    fed_parser.add_argument('--pfl_algo', type=str, required=True, choices=['fedavg'])
     fed_parser.add_argument('--client_optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
     fed_parser.add_argument('--server_optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
     fed_parser.add_argument('--num_communication_rounds', type=int, default=1000)
     fed_parser.add_argument('--num_clients_per_round', type=int, default=10)
     fed_parser.add_argument('--num_local_epochs', type=int, default=1)
-    fed_parser.add_argument('--train_batch_size', type=int, default=32)
-    fed_parser.add_argument('--eval_batch_size', type=int)  # if not specified use train_batch_size
     # LR scheduling within local iterations
     fed_parser.add_argument('--client_lr', type=float, default=3.5e-4)
     fed_parser.add_argument('--client_lr_decay_factor', type=float, default=1.0)  # <= 1
@@ -64,86 +59,41 @@ def make_pfl_train_parser():
     fed_parser.add_argument('--global_scheduler', type=str, default='const',
                             choices=['const', 'linear', 'expo', 'const_and_cut'])
     fed_parser.add_argument('--global_warmup_fraction', type=float, default=0.1)
-
     fed_parser.add_argument('--server_lr', type=float, default=1.0)
     fed_parser.add_argument('--server_momentum', type=float, default=0.0)
 
-    # Model-specific Arguments
-    model_parser = parser.add_argument_group('model_args', 'Model args')
-    model_parser.add_argument('--model_name', type=str)
-    model_parser.add_argument('--max_sequence_length', type=int, default=20)
-    model_parser.add_argument('--vocab_size', type=int, default=10000)
-    model_parser.add_argument('--num_oov_buckets', type=int, default=1)
-    model_parser.add_argument('--arch_size', type=str, default='tiny')
-    model_parser.add_argument('--max_grad_norm', type=float, default=0.25)
-    model_parser.add_argument('--clip_grad_norm', action='store_true')  # If true, clip grad norm
-    model_parser.add_argument('--num_warmup_rounds', type=int, default=10)  # federated setting
 
     return parser
 
 def make_train_parser():
     parser = argparse.ArgumentParser()
-    # General arguments
-    parser.add_argument('--data_dir', type=str, default='/checkpoint/pillutla/data')
-    parser.add_argument('--dataset', type=str, required=True,
-                        choices=['emnist', 'stackoverflow'])
-    parser.add_argument('--max_num_elements_per_client', type=int, default=1000)
-    parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--savefilename', type=str, default='./saved_models/model.pt')
-    parser.add_argument('--logfilename', type=str, default='./logs/out')
+    add_common_args(parser)
+    add_model_args(parser)
 
-    # Logging Arguments
-    log_parser = parser.add_argument_group('log_args', 'Logging Arguments')
-    # log_parser.add_argument('--log_train', action='store_true')  # if specified, also log training stats
-    log_parser.add_argument('--max_num_clients_for_logging', type=int, default=2000)
-
-    # Training Arugments 1
-    fed_parser = parser.add_argument_group('train_args', 'Model training args')
-    fed_parser.add_argument('--train_batch_size', type=int, default=32)
-    fed_parser.add_argument('--eval_batch_size', type=int)  # if not specified use train_batch_size
-    fed_parser.add_argument('--lr', type=float, default=3.5e-4)
-    fed_parser.add_argument('--lr_decay_factor', type=float, default=1.0)  # >= 1
-    fed_parser.add_argument('--lr_decay_every', type=int, default=100)  # how many rounds/epochs to decay lr
-
-    # Centralized Training Arguments
-    cent_parser = parser.add_argument_group('train_args', 'Model training args')
-    cent_parser.add_argument('--central_optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
-    cent_parser.add_argument('--log_train_every_n_clients', type=int)  # if None: 5 times every epoch
-    cent_parser.add_argument('--log_test_every_n_clients', type=int)  # if None: once every epoch
-    cent_parser.add_argument('--num_epochs_centralized', type=int, default=100)
-
-    # Model-specific Arguments
-    model_parser = parser.add_argument_group('model_args', 'Model args')
-    model_parser.add_argument('--model_name', type=str)
-    model_parser.add_argument('--max_sequence_length', type=int, default=20)
-    model_parser.add_argument('--vocab_size', type=int, default=10000)
-    model_parser.add_argument('--num_oov_buckets', type=int, default=1)
-    model_parser.add_argument('--arch_size', type=str, default='tiny')
-    model_parser.add_argument('--max_grad_norm', type=float, default=0.25)
-    model_parser.add_argument('--warmup_lr', type=float, default=1e-4)
-    model_parser.add_argument('--use_warmup', action='store_true')  # use LR warmup
-    model_parser.add_argument('--num_warmup_updates', type=float, default=5000)   # centralized setting
+    # Training Arugments
+    train_parser = parser.add_argument_group('train_args', 'Model training args')
+    train_parser.add_argument('--lr', type=float, default=3.5e-4)
+    train_parser.add_argument('--lr_decay_factor', type=float, default=1.0)  # >= 1
+    train_parser.add_argument('--lr_decay_every', type=int, default=100)  # how many rounds/epochs to decay lr
+    train_parser.add_argument('--central_optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
+    train_parser.add_argument('--log_train_every_n_clients', type=int)  # if None: 5 times every epoch
+    train_parser.add_argument('--log_test_every_n_clients', type=int)  # if None: once every epoch
+    train_parser.add_argument('--num_epochs_centralized', type=int, default=100)
+    train_parser.add_argument('--num_warmup_updates', type=float, default=5000)   # centralized setting
+    train_parser.add_argument('--warmup_lr', type=float, default=1e-4)
+    train_parser.add_argument('--use_warmup', action='store_true')  # use LR warmup
 
     return parser
 
 def make_finetune_parser():
     parser = argparse.ArgumentParser()
-    # General arguments
-    parser.add_argument('--data_dir', type=str, default='/checkpoint/pillutla/data')
-    parser.add_argument('--dataset', type=str, required=True,
-                        choices=['emnist', 'stackoverflow'])
-    parser.add_argument('--max_num_elements_per_client', type=int, default=10000)  # allow larger client datasets for personalization
-    parser.add_argument('--device', type=int, default=0)
-    parser.add_argument('--seed', type=int, default=100)
-    parser.add_argument('--modelfilename', type=str, default='./saved_models/model.pt')
-    parser.add_argument('--logfilename', type=str, default='./logs/out')
+    add_common_args(parser)
+    add_model_args(parser)  # TODO: save args from pretrained model to load these from there
+
     parser.add_argument('--train_mode', type=str, default='train', help='what to finetune')
     parser.add_argument('--layers_to_finetune', type=int, nargs='*', default=None)
     parser.add_argument('--adapter_hidden_dim', type=int, default=16)
 
-    parser.add_argument('--train_batch_size', type=int, default=32)
-    parser.add_argument('--eval_batch_size', type=int)  # if not specified use train_batch_size
     parser.add_argument('--lr', type=float, default=3.5e-4)
     parser.add_argument('--max_num_clients_for_personalization', type=int, default=100)
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
@@ -155,8 +105,28 @@ def make_finetune_parser():
     parser.add_argument('--num_updates_personalization', type=int, default=100)
     parser.add_argument('--num_epochs_personalization', type=int, default=2)
     parser.add_argument('--use_epochs_for_personalization', action='store_true')
-    # Model args
-    # TODO: save args from pretrained model to load these from there
+    return parser
+
+def add_common_args(parser):
+    parser.add_argument('--data_dir', type=str, default='/checkpoint/pillutla/data')
+    parser.add_argument('--dataset', type=str, required=True,
+                        choices=['emnist', 'stackoverflow'])
+    parser.add_argument('--max_num_elements_per_client', type=int, default=1000)
+    parser.add_argument('--device', type=int, default=0)
+    parser.add_argument('--seed', type=int, default=0)
+    # parser.add_argument('--savefilename', type=str, default='./saved_models/model.pt')
+    parser.add_argument('--savedir', type=str, default='./saved_models/pfl')  # save directory for PFL
+    parser.add_argument('--savefilename', type=str, default='./saved_models/model.pt')  # save pretrained model
+    parser.add_argument('--modelfilename', type=str, default='./saved_models/model.pt')  # to load pretrained model
+    parser.add_argument('--logfilename', type=str, default='./logs/out')
+    parser.add_argument('--train_all_clients', action='store_true')
+    parser.add_argument('--max_num_clients_for_logging', type=int, default=2000)
+    parser.add_argument('--train_batch_size', type=int, default=32)
+    parser.add_argument('--eval_batch_size', type=int)  # if not specified use train_batch_size
+
+
+def add_model_args(parser):
+    # Model-specific Arguments
     model_parser = parser.add_argument_group('model_args', 'Model args')
     model_parser.add_argument('--model_name', type=str)
     model_parser.add_argument('--max_sequence_length', type=int, default=20)
@@ -164,8 +134,7 @@ def make_finetune_parser():
     model_parser.add_argument('--num_oov_buckets', type=int, default=1)
     model_parser.add_argument('--arch_size', type=str, default='tiny')
     model_parser.add_argument('--max_grad_norm', type=float, default=0.25)
-
-    return parser
+    model_parser.add_argument('--clip_grad_norm', action='store_true')  # If true, clip grad norm
 
 def update_arch_params_from_arch_size(args):
     if args.dataset != 'stackoverflow':

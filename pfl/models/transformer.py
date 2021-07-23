@@ -1,8 +1,11 @@
+from collections import OrderedDict
 import math
 import torch
 import torch.nn as nn
 from torch.nn.functional import softmax, relu
 from torchinfo import summary
+
+from .base_model import PFLBaseModel
 
 class TransformerBlock(nn.Module):
     def __init__(self, num_attn_heads, input_dim, attn_hidden_dim, fc_hidden_dim, dropout=0.):
@@ -99,7 +102,7 @@ class AdapterBlock(nn.Module):
         return u
 
 
-class Transformer(nn.Module):
+class Transformer(PFLBaseModel):
     def __init__(self, seq_len, vocab_size, input_dim, attn_hidden_dim, fc_hidden_dim,
                  num_attn_heads, num_layers, tied_weights=False, dropout_tr=0., dropout_io=0.,
     ):
@@ -140,6 +143,8 @@ class Transformer(nn.Module):
         nn.init.normal_(self.word_embedding.weight, 0, .02)
         if not self.tied_weights: nn.init.normal_(self.decoder.weight, 0, .02)
         nn.init.constant_(self.bias, 0.0)
+        self.is_on_client = None
+        self.is_on_server = None
 
     def forward(self, x):
         # x: (seq_len, batch_size)
@@ -165,6 +170,8 @@ class Transformer(nn.Module):
                       dtypes=[torch.int64], device=device))
 
     def load_pretrained_and_prepare(self, state_dict, train_mode, layers_to_finetune, adapter_hidden_dim):
+        """ Load state_dict, initialize finetune modules and set requires_grad to freeze weights.
+        """
         assert train_mode in ['train', 'finetune', 'finetune_tr_layer', 
                               'finetune_inp_layer', 'finetune_out_layer',
                               'adapter', 'prefix']
@@ -220,3 +227,57 @@ class Transformer(nn.Module):
         # set requires_grad for those parameters which need to be modified
         for name, param in self.named_parameters():
             param.requires_grad_(do_finetune(name))
+    
+    def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim):
+        """ Initialize adapter modules if necessary and split parameters into server_parameters and client_parameters.
+        """
+        if self.is_on_client is not None:
+            raise ValueError('This model has already been split across clients and server.')
+        assert client_mode in ['none', 'tr_layer', 'inp_layer', 'out_layer', 'adapter', 'prefix', 'interpolate']
+        is_on_server = None
+
+        # Untie weights for IO layers if required
+        if self.tied_weights and client_mode in ['inp_layer', 'out_layer']:
+            self.tied_weights = False
+            self.decoder = nn.Linear(*self.word_embedding.weight.t().shape, bias=False) # hidden dim -> vocab size
+            with torch.no_grad():  # initialize with word embedding
+                self.decoder.weight.copy_(self.word_embedding.weight)
+
+        if layers_to_client is None:  # do not fine tune
+            layers_to_client = []
+        if client_mode == 'tr_layer' and len(layers_to_client) is None:
+            raise ValueError(f'No transformer layers to client. Choose fedavg setting')
+
+        # Set requires_grad based on `client_mode`
+        if client_mode == 'none' or client_mode is None:  # the entire model is on the server
+            is_on_client = lambda _: False
+            # is_on_server = lambda _: True
+        elif 'tr_layer' in client_mode:
+            # Send a specific transformer layer to client
+            def is_on_client(name):
+                return any([f'transformer.{i}' in name for i in layers_to_client])
+        elif client_mode in ['inp_layer']:
+            # Send positional and word embeddings to clients
+            def is_on_client(name):
+                return ('embedding' in name)
+        elif client_mode in ['finetune_out_layer']:
+            # Send final linear layer to client
+            def is_on_client(name):
+                return ('bias' == name) or ('decoder' in name)
+        elif client_mode in ['adapter']:
+            # Send adapter modules (+ normalization) to clients
+            def is_on_client(name):
+                return ('adapter' in name) or ('layernorm' in name)
+            # Add adapter modules
+            for block in self.transformer:
+                block.add_adapters(adapter_hidden_dim)
+        elif client_mode == 'interpolate':
+            is_on_client = lambda _: True
+            is_on_server = lambda _: True
+        else:
+            raise ValueError(f'Unknown client_mode: {client_mode}')
+        if is_on_server is None:
+            def is_on_server(name):
+                return not is_on_client(name)
+        self.is_on_client = is_on_client
+        self.is_on_server = is_on_server

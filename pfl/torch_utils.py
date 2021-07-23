@@ -1,8 +1,8 @@
 from collections import OrderedDict
 import torch
 
-def get_float_state_dict(model):
-    return OrderedDict((k, v) for (k, v) in model.state_dict().items() if torch.is_floating_point(v))
+# def get_float_state_dict(model):
+#     return OrderedDict((k, v) for (k, v) in model.state_dict().items() if torch.is_floating_point(v))
 
 def get_device(model):
     return next(model.parameters()).device
@@ -25,23 +25,23 @@ def interpolate_(model_r: torch.nn.Module,
     for r, l1, l2 in zip(model_r.parameters(), model_l1.parameters(), model_l2.parameters()):
         torch.add(l2, l1-l2, alpha=alpha, out=r)  # r = l2 + alpha * (l1 - l2)
 
-@torch.no_grad()
-def assign_(model1: torch.nn.Module, model2: torch.nn.Module) -> None:
-    """Set model1 = model2.
-        Assume that each model has *exactly* the same parameters.
-    """
-    for (_, p1), (_, p2) in zip(get_float_state_dict(model1).items(), 
-                                get_float_state_dict(model2).items()):
-        p1.copy_(p2)  # p1 <- p2
+# @torch.no_grad()
+# def assign_(model1: torch.nn.Module, model2: torch.nn.Module) -> None:
+#     """Set model1 = model2.
+#         Assume that each model has *exactly* the same parameters.
+#     """
+#     for (_, p1), (_, p2) in zip(model1.state_dict().items(), 
+#                                 model2.state_dict().items()):
+#         p1.copy_(p2)  # p1 <- p2
 
-@torch.no_grad()
-def assign_improper_(model1: torch.nn.Module, model2: torch.nn.Module) -> None:
-    """Set model1 = model2 for all common names in model1 and model2
-    """
-    d1 = get_float_state_dict(model1)
-    for name, p in get_float_state_dict(model2).items():
-        if name in d1:
-            d1[name].copy_(p)
+# @torch.no_grad()
+# def assign_improper_(model1: torch.nn.Module, model2: torch.nn.Module) -> None:
+#     """Set model1 = model2 for all common names in model1 and model2
+#     """
+#     d1 = model1.state_dict()
+#     for name, p in model2.state_dict().items():
+#         if name in d1:
+#             d1[name].copy_(p)
 
 def norm(model: torch.nn.Module) -> torch.Tensor:
     return torch.linalg.norm(torch.stack([torch.linalg.norm(v.view(-1)) for v in model.parameters()]).view(-1))

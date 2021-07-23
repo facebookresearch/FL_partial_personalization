@@ -3,6 +3,8 @@ import torch.nn as nn
 from typing import Optional
 from torchinfo import summary
 
+from .base_model import PFLBaseModel
+
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
     """3x3 convolution with padding"""
@@ -88,7 +90,7 @@ class AdapterBlock(nn.Module):
         out += identity  # skip connection
         return out
 
-class EmnistResNetGN(nn.Module):
+class EmnistResNetGN(PFLBaseModel):
     def __init__(self, layers=(2, 2, 2, 2), num_classes=62):
         super().__init__()
         self.inplanes = 64
@@ -111,6 +113,8 @@ class EmnistResNetGN(nn.Module):
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
+        self.is_on_client = None
+        self.is_on_server = None
 
     def _make_layer(self, planes: int, blocks: int,
                     stride: int = 1) -> nn.Sequential:
@@ -193,3 +197,54 @@ class EmnistResNetGN(nn.Module):
         # set requires_grad for those parameters which need to be modified
         for name, param in self.named_parameters():
             param.requires_grad_(do_finetune(name))
+
+    def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim=-1):
+        if self.is_on_client is not None:
+            raise ValueError('This model has already been split across clients and server.')
+        assert client_mode in ['none', 'res_layer', 'inp_layer', 'out_layer', 'adapter', 'interpolate'] 
+        # Prepare
+        if layers_to_client is None:  # no layers to client
+            layers_to_client = []
+        if client_mode == 'res_layer' and len(layers_to_client) is None:
+            raise ValueError(f'No residual blocks to finetune. Nothing to do')
+        is_on_server = None
+        
+        # Set requires_grad based on `train_mode`
+        if client_mode in ['none', None]:
+            # no parameters on the client
+            def is_on_client(name):
+                return False
+        elif 'res_layer' in client_mode:
+            # Specific residual blocks are sent to client (available layers are [1, 2, 3, 4])
+            def is_on_client(name):
+                return any([f'layer{i}' in name for i in layers_to_client])
+        elif client_mode in ['inp_layer']:
+            # First convolutional layer is sent to client
+            def is_on_client(name):
+                return (name in ['conv1.weight', 'bn1.weight', 'bn1.bias'])  # first conv + bn
+        elif client_mode in ['out_layer']:
+            # Final linear layer is sent to client
+            def is_on_client(name):
+                return (name in ['fc.weight', 'fc.bias'])  # final fc
+        elif client_mode in ['adapter']:
+            # Train adapter modules (+ batch norm)
+            def is_on_client(name):
+                return ('adapter' in name) or ('bn1' in name) or ('bn2' in name)
+            # Add adapter modules
+            for layer in [self.layer1, self.layer2, self.layer3, self.layer4]:
+                for block in layer.children():
+                    # each block is of type `ResidualBlock`
+                    block.add_adapters()
+        elif client_mode == 'interpolate':
+            is_on_client = lambda _: True
+            is_on_server = lambda _: True
+        else:
+            raise ValueError(f'Unknown client_mode: {client_mode}')
+        if is_on_server is None:
+            def is_on_server(name): 
+                return not is_on_client(name)
+        
+        self.is_on_client = is_on_client
+        self.is_on_server = is_on_server
+    
+

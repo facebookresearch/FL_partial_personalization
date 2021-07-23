@@ -16,12 +16,12 @@ class FedAvg(FedBase):
         )
     
     @torch.no_grad()
-    def reset_temp_model(self):
-        """Combine global_model and client_model into temp model to make predictions
+    def reset_combined_model(self):
+        """Combine global_model and client_model into combined model to make predictions
         """
         # FedAvg has no client model so simply use the server model
-        state_dict = torch_utils.get_float_state_dict(self.server_model)
-        self.temp_model.load_state_dict(state_dict, strict=False)
+        state_dict = self.server_model.server_state_dict()
+        self.combined_model.load_state_dict(state_dict, strict=False)
 
     def run_local_updates(
             self, client_loader, num_local_epochs,
@@ -29,46 +29,32 @@ class FedAvg(FedBase):
     ):
         avg_loss = 0.0
         count = 0
-        device = next(self.temp_model.parameters()).device
+        device = next(self.combined_model.parameters()).device
         total_num_local_steps = num_local_epochs * len(client_loader)
         client_optimizer, client_scheduler = get_client_optimizer(
-            client_optimizer, self.temp_model, total_num_local_steps, client_optimizer_args
+            client_optimizer, self.combined_model, total_num_local_steps, client_optimizer_args
         )
         for _ in range(num_local_epochs):
             for x, y in client_loader:
                 x, y = x.to(device), y.to(device)
                 client_optimizer.zero_grad()
-                yhat = self.temp_model(x)
+                yhat = self.combined_model(x)
                 loss = self.loss_fn(yhat, y)
                 avg_loss = avg_loss * count / (count + 1) + loss.item() / (count + 1) 
                 count += 1
                 loss.backward()
                 if self.clip_grad_norm:
-                    torch.nn.utils.clip_grad_norm_(self.temp_model.parameters(), self.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(self.combined_model.parameters(), self.max_grad_norm)
                 client_optimizer.step()
                 client_scheduler.step()
         # Return number of batches in epoch as a proxy for dataset size
         return avg_loss, len(client_loader)
 
-
     def update_local_model_and_get_client_grad(self):
-        """Update client_model based on temp_model and return the state_dict with the global model "grad".
+        """Update client_model based on combined_model and return the state_dict with the global model "grad".
         """
-        # FedAvg does not have a client model. So, simply return the difference
-        old_params = torch_utils.get_float_state_dict(self.server_model)
-        new_params = torch_utils.get_float_state_dict(self.temp_model)
+        # FedAvg does not have a client model. So, simply return the difference (old - new)
+        old_params = self.server_model.server_state_dict()
+        new_params = self.combined_model.server_state_dict()
         return OrderedDict((k, v - new_params[k]) for (k, v) in old_params.items())
-
-    @torch.no_grad()
-    def test_on_client(self, client_loader):
-        is_training = self.server_model.training
-        self.server_model.eval()
-        # no local model here; directly use the global model
-        num_pred, metrics = pfl.metrics.compute_metrics_for_client(
-            self.server_model, client_loader, self.metrics_fn
-        )
-        if is_training:
-            self.server_model.train()
-        return num_pred, metrics
-    
-    
+ 

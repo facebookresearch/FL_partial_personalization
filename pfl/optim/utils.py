@@ -6,11 +6,11 @@ from .server_optimizers import SGD, Adam
 
 def get_server_optimizer(server_optimizer, server_model, server_lr, server_momentum):
     if server_optimizer.lower() == 'sgd':
-        return SGD(torch_utils.get_float_state_dict(server_model).values(),
-                               lr=server_lr, momentum=server_momentum)
+        return SGD(
+            server_model.server_state_dict().values(), lr=server_lr, momentum=server_momentum
+        )
     elif server_optimizer.lower() == 'adam':
-        return Adam(torch_utils.get_float_state_dict(server_model).values(),
-                                lr=server_lr)
+        return Adam(server_model.server_state_dict().values(), lr=server_lr)
     else:
         raise ValueError(f'Unknown Optimizer: {server_optimizer}')
 

@@ -4,12 +4,12 @@
 #SBATCH --comment="SO lr"
 #SBATCH --partition=learnfair
 #SBATCH --output=/checkpoint/pillutla/pfl/outs/%A_%a.out
-#SBATCH --array=0-19  # TODO: count
+#SBATCH --array=0-23  # TODO: count
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=40G
 #SBATCH --gres=gpu:1
-#SBATCH --time=10:00:00
+#SBATCH --time=12:00:00
 #SBATCH --open-mode=append
 #SBATCH --signal=B:USR1@600
 

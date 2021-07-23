@@ -21,9 +21,9 @@ class FedBase:
         self.server_model = server_model
         self.client_model = client_model 
         if client_model is None:  # use this model to update:
-            self.temp_model = copy.deepcopy(self.server_model)
+            self.combined_model = copy.deepcopy(self.server_model)
         else:
-            self.temp_model = copy.deepcopy(self.client_model)
+            self.combined_model = copy.deepcopy(self.client_model)
         # Server Optimizer
         self.server_optimizer = get_server_optimizer(server_optimizer, self.server_model, server_lr, server_momentum)
         # Client optimizer
@@ -40,8 +40,8 @@ class FedBase:
     def sample_clients(self, num_clients_to_sample):
         return self.rng.sample(self.available_clients, k=num_clients_to_sample)
     
-    def reset_temp_model(self):
-        """Combine global_model and client_model into temp model to make predictions
+    def reset_combined_model(self):
+        """Combine global_model and client_model into combined_model to make predictions
         """
         raise NotImplementedError
 
@@ -49,11 +49,8 @@ class FedBase:
         # return avg_loss, num_data on the client
         raise NotImplementedError
 
-    def test_on_client(self, client_loader):
-        raise NotImplementedError
-
     def update_local_model_and_get_client_grad(self):
-        """Update client_model based on temp_model and return the state_dict with the global model update.
+        """Update client_model based on combined_model and return the state_dict with the global model update.
         """
         raise NotImplementedError
 
@@ -76,12 +73,13 @@ class FedBase:
             if self.client_model is not None:
                 state_dict = torch.load(client_fn, map_location=device)
                 self.client_model.load_state_dict(state_dict, strict=False)
-            # update temp model to be the correct mix of local and global models
-            self.reset_temp_model()
+            # update combined model to be the correct mix of local and global models and set it to train mode
+            self.reset_combined_model()
+            self.combined_model.train()
             
             # run local updates
             client_loader = self.train_fed_loader.get_client_dataloader(client_id)
-            self.temp_model.train()
+            self.combined_model.train()
             avg_loss, num_data = self.run_local_updates(
                 client_loader, num_local_epochs, client_optimizer, client_optimizer_args
             )
@@ -89,7 +87,7 @@ class FedBase:
             num_data_per_client.append(num_data)
 
             # client_grad is a pseudogradient (= old_model - new_model)
-            client_grad = self.update_local_model_and_get_client_grad()  # state_dict w/ global params
+            client_grad = self.update_local_model_and_get_client_grad()  # state_dict w/ server params
             client_deltas.append(client_grad)
             
             # save updated client_model
@@ -118,12 +116,24 @@ class FedBase:
         if len(test_fed_loader) > max_num_clients:
             rng = random.Random(0)
             list_of_clients = rng.sample(list_of_clients, max_num_clients)
+        device = next(self.server_model.parameters()).device
         
         collected_metrics = None
         sizes = []
         for client_id in list_of_clients:
+            # load client model 
+            client_fn = self.get_client_fn(client_id)
+            if self.client_model is not None:
+                state_dict = torch.load(client_fn, map_location=device)
+                self.client_model.load_state_dict(state_dict, strict=False)
+            # update combined model to be the correct mix of local and global models and set it to eval mode
+            self.reset_combined_model()
+            self.combined_model.eval()
+            # get client dataloader and compute metrics for client
             client_dataloader = test_fed_loader.get_client_dataloader(client_id)
-            client_size, metrics_for_client = self.test_on_client(client_dataloader)
+            client_size, metrics_for_client = pfl.metrics.compute_metrics_for_client(
+                self.combined_model, client_dataloader, self.metrics_fn
+            )
             sizes.append(client_size)
             if collected_metrics is not None:
                 for metric_name, metric_val in metrics_for_client.items():
