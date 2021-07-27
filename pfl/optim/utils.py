@@ -14,13 +14,22 @@ def get_server_optimizer(server_optimizer, server_model, server_lr, server_momen
     else:
         raise ValueError(f'Unknown Optimizer: {server_optimizer}')
 
-def get_client_optimizer(client_optimizer, model, num_training_steps, optimizer_args):
+def get_client_optimizer(client_optimizer, model, num_training_steps, optimizer_args, parameters_to_choose='all'):
     # optimizer_args: client_lr, client_momentum, scheduler, lr_decay_factor, lr_decay_every, warmup_fraction
+    # parameters_to_choose: accept one of ['all', 'server', 'client']
+    if parameters_to_choose == 'all':
+        params = model.parameters()
+    elif parameters_to_choose == 'server':
+        params = model.server_parameters()
+    elif parameters_to_choose == 'client':
+        params = model.client_parameters()
+    else:
+        raise ValueError(f'Unknown params_to_choose: {parameters_to_choose}')
     if client_optimizer.lower() == 'sgd':
-        optimizer = torch.optim.SGD(model.parameters(), lr=optimizer_args.client_lr, 
+        optimizer = torch.optim.SGD(params, lr=optimizer_args.client_lr, 
                                     momentum=optimizer_args.client_momentum)
     elif client_optimizer.lower() == 'adam':
-        optimizer = torch.optim.Adam(model.parameters(), lr=optimizer_args.client_lr)
+        optimizer = torch.optim.Adam(params, lr=optimizer_args.client_lr)
     else:
         raise ValueError(f'Unknown optimizer: {client_optimizer}')
     # Setup scheduler

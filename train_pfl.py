@@ -1,6 +1,4 @@
-import copy
 import gc
-import math
 import numpy as np
 import os
 import pandas as pd
@@ -32,12 +30,12 @@ def main():
     if args.pfl_algo == 'fedavg' and args.personalize_on_client != 'none':
         raise ValueError('FedAvg requires personalize_on_client = "none"')
     server_model = pfl.models.get_model_from_args(args, device).train()
+    if args.pretrained_model_path is not None:
+        print('Loading pretrained model from', args.pretrained_model_path)
+        state_dict = torch.load(args.pretrained_model_path, map_location=device)['model_state_dict']
+        server_model.load_state_dict(state_dict)
     server_model.print_summary(args.train_batch_size)
     server_model.split_server_and_client_params(args.personalize_on_client, args.layers_to_finetune, args.adapter_hidden_dim)
-    if args.pfl_algo != 'fedavg':
-        client_model = copy.deepcopy(server_model).train()
-    else:
-        client_model = None
     print(f'Setup model in', timedelta(seconds=round(time.time() - start_time)))
 
     # Setup dataloaders
@@ -68,14 +66,14 @@ def main():
         train_fed_loader=train_fed_loader,
         available_clients=test_fed_loader.available_clients,
         server_model=server_model, 
-        client_model=client_model,
         server_optimizer=args.server_optimizer,
         server_lr=args.server_lr, 
         server_momentum=args.server_momentum, 
         max_grad_norm=args.max_grad_norm,
         clip_grad_norm=args.clip_grad_norm,
         save_dir=args.savedir, 
-        seed=args.seed
+        seed=args.seed,
+        save_client_params_to_disk=args.save_client_params_to_disk,
     )
     pfl_optim = get_pfl_optimizer(args.pfl_algo, **pfl_args)
 
@@ -122,8 +120,9 @@ def main():
               f'global time: {timedelta(seconds=round(time.time() - global_start_time))}')
         start_time = time.time()
     
-    avg_loss = math.log(train_fed_loader.num_classes)  # initialize at random guessing
-    _log_test(pfl_optim.server_model, 0)
+    avg_loss = None
+    if not args.skip_first_log:
+        _log_test(pfl_optim.server_model, 0)
     start_time = time.time()
     
     # Main training loop
@@ -136,7 +135,10 @@ def main():
         loss_per_round = pfl_optim.run_one_round(
             args.num_clients_per_round, args.num_local_epochs, args.client_optimizer, client_optimizer_args
         )
-        avg_loss = 0.9 * avg_loss + 0.1 * loss_per_round
+        if np.isnan(loss_per_round):
+            print(f"""NaN encountered in round {comm_round}. Prev avg_loss = {avg_loss}. Exiting.""")
+            sys.exit(-1)
+        avg_loss = 0.9 * avg_loss + 0.1 * loss_per_round if avg_loss is not None else loss_per_round
         # logging
         if (comm_round+1) % args.log_train_every_n_rounds == 0:
             _log_train(comm_round, avg_loss)
@@ -150,6 +152,10 @@ def main():
 def get_pfl_optimizer(pfl_algo, **kwargs):
     if pfl_algo.lower() == 'fedavg':
         return pfl.optim.FedAvg(**kwargs)
+    elif pfl_algo.lower() == 'pfl_joint':
+        return pfl.optim.PFLJointTrain(**kwargs)
+    elif pfl_algo.lower() in ['pfl_alternating', 'pfl_am']:
+        return pfl.optim.PFLAlternatingTrain(**kwargs)
     else:
         raise ValueError(f'Unknown PFL algorithm: {pfl_algo}')
 

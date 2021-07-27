@@ -1,5 +1,6 @@
 from .fedavg import FedAvg
-# from .utils import get_pfl_optimizer
+from .pfl_split_joint import PFLJointTrain
+from .pfl_split_alternating import PFLAlternatingTrain
 from . import utils
 
-__all__ = [FedAvg, utils]
+__all__ = [utils, FedAvg, PFLJointTrain, PFLAlternatingTrain]

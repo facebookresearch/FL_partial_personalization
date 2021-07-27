@@ -25,19 +25,22 @@ def make_pfl_train_parser():
     parser = argparse.ArgumentParser()
     add_common_args(parser)
     add_model_args(parser)
+    parser.add_argument('--pretrained_model_path', type=str, default=None)  # if None, train from scratch
 
     # Logging Arguments
     log_parser = parser.add_argument_group('log_args', 'Logging Arguments')
     # log_parser.add_argument('--log_train', action='store_true')  # if specified, also log training stats
     log_parser.add_argument('--log_train_every_n_rounds', type=int, default=10)
     log_parser.add_argument('--log_test_every_n_rounds', type=int, default=50)
+    log_parser.add_argument('--skip_first_log', action='store_true')
 
     # PFL Args
     pfl_parser = parser.add_argument_group('train_args', 'PFL args')
-    pfl_parser.add_argument('--pfl_algo', type=str, required=True, choices=['fedavg'])
+    pfl_parser.add_argument('--pfl_algo', type=str, required=True, choices=['fedavg', 'pfl_alternating', 'pfl_joint'])
     pfl_parser.add_argument('--personalize_on_client', type=str, default='none')  # how to split/share the model on the client
     pfl_parser.add_argument('--layers_to_finetune', type=int, nargs='*', default=None)
     pfl_parser.add_argument('--adapter_hidden_dim', type=int, default=16)
+    pfl_parser.add_argument('--save_client_params_to_disk', action='store_true')
 
     # Federated Training Arugments
     fed_parser = parser.add_argument_group('train_args', 'Model training args')

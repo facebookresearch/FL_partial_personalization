@@ -1,28 +1,25 @@
 from collections import OrderedDict
+import copy
 import torch
 
-from .base import FedBase
+from .pfl_split_base import SplitFLBase
 from .utils import get_client_optimizer
 
-class FedAvg(FedBase):
+class PFLJointTrain(SplitFLBase):
+    """Split learning approach to PFL where client and server maintain non-overlapping subsets of parameters.
+        Client and server components are jointly trained.
+    """
+    # TODO: different learning rates for local and global component.
     def __init__(self, train_fed_loader, available_clients, server_model,
                  server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm,
                  save_dir, seed, save_client_params_to_disk=False):
-        client_model = None  # FedAvg does not have a client model
+        client_model = copy.deepcopy(server_model)  # not null
         super().__init__(
             train_fed_loader, available_clients, server_model, client_model, 
             server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm, save_dir, seed,
             save_client_params_to_disk
         )
     
-    @torch.no_grad()
-    def reset_combined_model(self):
-        """Combine global_model and client_model into combined model to make predictions
-        """
-        # FedAvg has no client model so simply use the server model
-        state_dict = self.server_model.server_state_dict()
-        self.combined_model.load_state_dict(state_dict, strict=False)
-
     def run_local_updates(
             self, client_loader, num_local_epochs,
             client_optimizer, client_optimizer_args
@@ -31,8 +28,10 @@ class FedAvg(FedBase):
         count = 0
         device = next(self.combined_model.parameters()).device
         total_num_local_steps = num_local_epochs * len(client_loader)
+        self.combined_model.requires_grad_(True)  # all parameters are trainable
         client_optimizer, client_scheduler = get_client_optimizer(
-            client_optimizer, self.combined_model, total_num_local_steps, client_optimizer_args
+            client_optimizer, self.combined_model, total_num_local_steps, client_optimizer_args,
+            parameters_to_choose='all',  # take all parameters for joint training
         )
         for _ in range(num_local_epochs):
             for x, y in client_loader:
@@ -49,12 +48,3 @@ class FedAvg(FedBase):
                 client_scheduler.step()
         # Return number of batches in epoch as a proxy for dataset size
         return avg_loss, len(client_loader)
-
-    def update_local_model_and_get_client_grad(self):
-        """Update client_model based on combined_model and return the state_dict with the global model "grad".
-        """
-        # FedAvg does not have a client model. So, simply return the difference (old - new)
-        old_params = self.server_model.server_state_dict()
-        new_params = self.combined_model.server_state_dict()
-        return OrderedDict((k, v - new_params[k]) for (k, v) in old_params.items())
- 

@@ -38,3 +38,11 @@ class PFLBaseModel(torch.nn.Module):
     
     def server_state_dict(self):
         return OrderedDict((n, p) for (n, p) in self.state_dict().items() if self.is_on_server(n))
+
+    def client_params_requires_grad_(self, requires_grad):
+        for p in self.client_parameters():
+            p.requires_grad_(requires_grad)
+
+    def server_params_requires_grad_(self, requires_grad):
+        for p in self.server_parameters():
+            p.requires_grad_(requires_grad)

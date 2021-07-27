@@ -2,6 +2,8 @@ from collections import OrderedDict
 import copy
 import numpy as np
 import random
+import time
+from datetime import timedelta
 import torch
 
 from pfl import torch_utils
@@ -13,7 +15,7 @@ class FedBase:
     """
     def __init__(self, train_fed_loader, available_clients, server_model, client_model, 
                  server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm,
-                 save_dir, seed):
+                 save_dir, seed, save_client_params_to_disk=False):
         self.available_clients = available_clients
         self.train_fed_loader = train_fed_loader
 
@@ -36,6 +38,42 @@ class FedBase:
         # Misc
         self.save_dir = save_dir
         self.rng = random.Random(seed+123)
+        self.save_client_params_to_disk = save_client_params_to_disk
+        
+        if self.client_model is not None:
+            print('Initializing client models')
+            start_time = time.time()
+            start_params = self.client_model.client_state_dict()
+            if not save_client_params_to_disk:  # maintain {client_id -> client_state_dict} mapping
+                self.saved_client_params = {client_id: copy.deepcopy(start_params) for client_id in self.available_clients}
+            else:  # save client_state_dict to disk
+                for client_id in self.available_clients:
+                    client_fn = self.get_client_fn(client_id)
+                    torch.save(self.client_model.client_state_dict(), client_fn)
+            print('Initialized client models in', timedelta(seconds=round(time.time() - start_time)))
+
+    def load_client_model(self, client_id):
+        if self.client_model is None: 
+            return
+        if self.save_client_params_to_disk:  # load client params from disk
+            device = next(self.server_model.parameters()).device
+            client_fn = self.get_client_fn(client_id)
+            state_dict = torch.load(client_fn, map_location=device)
+        else:  # load client params from dictionary
+            state_dict = self.saved_client_params[client_id]
+        self.client_model.load_state_dict(state_dict, strict=False)
+
+    def save_client_model(self, client_id):
+        if self.client_model is None: 
+            return
+        state_dict = self.client_model.client_state_dict()
+        if self.save_client_params_to_disk:  # Save client params to disk
+            client_fn = self.get_client_fn(client_id)
+            torch.save(state_dict, client_fn)
+        else:  # save client params to dictionary by copying
+            saved_state_dict = self.saved_client_params[client_id]
+            for (k, v) in saved_state_dict.items():  # change saved_state_dict in-place without changing pointers
+                v.copy_(state_dict[k]) 
 
     def sample_clients(self, num_clients_to_sample):
         return self.rng.sample(self.available_clients, k=num_clients_to_sample)
@@ -47,6 +85,7 @@ class FedBase:
 
     def run_local_updates(self, client_loader, num_local_epochs, client_optimizer, client_optimizer_args):
         # return avg_loss, num_data on the client
+        # TODO: set requires grad appropriately on self.combined_model
         raise NotImplementedError
 
     def update_local_model_and_get_client_grad(self):
@@ -61,7 +100,6 @@ class FedBase:
         client_losses = []
         client_deltas = []
         num_data_per_client = []
-        device = next(self.server_model.parameters()).device
 
         # Sample clients
         sampled_clients = self.sample_clients(num_clients_per_round)
@@ -69,20 +107,18 @@ class FedBase:
         # Run local training on each client
         for i, client_id in enumerate(sampled_clients):
             # load client model 
-            client_fn = self.get_client_fn(client_id)
-            if self.client_model is not None:
-                state_dict = torch.load(client_fn, map_location=device)
-                self.client_model.load_state_dict(state_dict, strict=False)
+            self.load_client_model(client_id)
             # update combined model to be the correct mix of local and global models and set it to train mode
             self.reset_combined_model()
-            self.combined_model.train()
             
             # run local updates
+            # print(f'training client {i}: {client_id}')
             client_loader = self.train_fed_loader.get_client_dataloader(client_id)
             self.combined_model.train()
             avg_loss, num_data = self.run_local_updates(
                 client_loader, num_local_epochs, client_optimizer, client_optimizer_args
             )
+            # print(f'done training client {i}. Loss = {avg_loss}, num_data={num_data}')
             client_losses.append(avg_loss)
             num_data_per_client.append(num_data)
 
@@ -91,15 +127,13 @@ class FedBase:
             client_deltas.append(client_grad)
             
             # save updated client_model
-            if self.client_model is not None:
-                torch.save(self.client_model.state_dict(), client_fn)
+            self.save_client_model(client_id)
 
         # combine local updates to update the server model
         combined_grad = torch_utils.weighted_average_of_state_dicts(  # state dict
             client_deltas, num_data_per_client
         ) 
-        self.server_optimizer.step(combined_grad) 
-
+        self.server_optimizer.step(combined_grad)
         return np.average(client_losses, weights=num_data_per_client)
 
     def test_all_clients(self, test_fed_loader, max_num_clients=5000):
@@ -122,10 +156,7 @@ class FedBase:
         sizes = []
         for client_id in list_of_clients:
             # load client model 
-            client_fn = self.get_client_fn(client_id)
-            if self.client_model is not None:
-                state_dict = torch.load(client_fn, map_location=device)
-                self.client_model.load_state_dict(state_dict, strict=False)
+            self.load_client_model(client_id)
             # update combined model to be the correct mix of local and global models and set it to eval mode
             self.reset_combined_model()
             self.combined_model.eval()
