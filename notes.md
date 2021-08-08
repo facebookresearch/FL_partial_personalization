@@ -17,3 +17,5 @@ Best LR params for StackOverflow / arch_size="tiny"
     --client_optimizer sgd  --client_lr 10.0 \
     --global_scheduler linear --global_warmup_fraction 0.1 \
     --warmup_fraction 0.1 --num_rounds 2000 
+
+saved_model="/checkpoint/pillutla/pfl/saved_models_fed/so_tiny_c-sgd_s-adam_g-linear_lr10_slr1e-2/main.pt"

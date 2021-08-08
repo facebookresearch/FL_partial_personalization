@@ -231,6 +231,7 @@ class Transformer(PFLBaseModel):
     def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim):
         """ Initialize adapter modules if necessary and split parameters into server_parameters and client_parameters.
         """
+        device = next(self.parameters()).device
         if self.is_on_client is not None:
             raise ValueError('This model has already been split across clients and server.')
         assert client_mode in ['none', 'tr_layer', 'inp_layer', 'out_layer', 'adapter', 'prefix', 'interpolate']
@@ -281,3 +282,4 @@ class Transformer(PFLBaseModel):
                 return not is_on_client(name)
         self.is_on_client = is_on_client
         self.is_on_server = is_on_server
+        self.to(device)

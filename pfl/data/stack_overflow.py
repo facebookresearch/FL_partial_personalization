@@ -273,7 +273,7 @@ def load_so_word_counts(data_dir):
     # https://github.com/tensorflow/federated/issues/1593
     loaded = False
     vocab_dict = None
-    for i in range(9):
+    for i in range(20):
         if loaded:
             return vocab_dict
         try:
@@ -283,9 +283,11 @@ def load_so_word_counts(data_dir):
             import random
             if i < 5:
                 t = random.randint(0, 100)
-            else:
+            elif i < 10:
                 t = random.randint(0, 600)
-            print(f'Failed on the trying {i+1}/10. Sleeping for {t} seconds and trying again.')
+            else:
+                t = random.randint(0, 1200)
+            print(f'Failed on the trying {i+1}/20. Sleeping for {t} seconds and trying again.')
             time.sleep(t)
             continue
     if loaded:

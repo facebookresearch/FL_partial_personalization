@@ -199,6 +199,7 @@ class EmnistResNetGN(PFLBaseModel):
             param.requires_grad_(do_finetune(name))
 
     def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim=-1):
+        device = next(self.parameters()).device
         if self.is_on_client is not None:
             raise ValueError('This model has already been split across clients and server.')
         assert client_mode in ['none', 'res_layer', 'inp_layer', 'out_layer', 'adapter', 'interpolate'] 
@@ -246,5 +247,6 @@ class EmnistResNetGN(PFLBaseModel):
         
         self.is_on_client = is_on_client
         self.is_on_server = is_on_server
+        self.to(device)
     
 

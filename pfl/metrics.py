@@ -77,11 +77,19 @@ def summarize_client_metrics(client_sizes, collected_metrics):
     summary_metrics = OrderedDict()
     collected_metrics_df = pd.DataFrame(collected_metrics)  # each column is a metric
     stats = DescrStatsW(collected_metrics_df.to_numpy(), weights=client_sizes)
+    stats2 = DescrStatsW(collected_metrics_df.to_numpy())
 
+    # Weighted statistics
     summary_metrics['mean'] = stats.mean.tolist()
     summary_metrics['std'] = stats.std.tolist()
     for q in [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]:
         summary_metrics[f'quantile_{q}'] = stats.quantile(q).to_numpy().reshape(-1).tolist()
+
+    # Unweighted statistics
+    summary_metrics['mean_u'] = stats2.mean.tolist()
+    summary_metrics['std_u'] = stats2.std.tolist()
+    for q in [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]:
+        summary_metrics[f'quantile_{q}_u'] = stats2.quantile(q).to_numpy().reshape(-1).tolist()
 
     summary_metrics = pd.DataFrame(summary_metrics, index=collected_metrics.keys())
     # access using summary_metrics.at['metric_name', 'mean']

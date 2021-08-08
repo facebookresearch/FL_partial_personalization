@@ -28,13 +28,13 @@ def main():
     # Setup model
     start_time = time.time()
     model = pfl.models.get_model_from_args(args, device).train()
-    optimizer = pfl.utils.setup_centralized_optimizer_from_args(args, model, use_warmup=args.use_warmup)
     model.print_summary(args.train_batch_size)
     print(f'Setup model in', timedelta(seconds=round(time.time() - start_time)))
 
     # Setup dataloaders
     start_time = time.time()
     train_fed_loader, test_fed_loader = pfl.data.get_federated_dataloader_from_args(args)
+    optimizer, scheduler = None, None  # Initialize later
     print('Instantiated dataloaders in', timedelta(seconds=round(time.time() - start_time)))
     print(f'Number of clients: Train = {len(train_fed_loader)}, Test = {len(test_fed_loader)}.')
 
@@ -80,20 +80,26 @@ def main():
         log_train.append(d)
         pd.DataFrame(log_train).to_csv(f'{args.logfilename}_train.csv')
         print(f'epoch: {epoch:.3f}, loss: {avg_loss:.4f}, norm: {model_norm:.4g},', 
+              f'lr: {optimizer.param_groups[0]["lr"]:.4g}',
               f'time: {timedelta(seconds=round(time.time() - start_time))},',
               f'global time: {timedelta(seconds=round(time.time() - global_start_time))}')
         start_time = time.time()
 
     # Main training loop
     avg_loss = math.log(train_fed_loader.num_classes)  # initialize at random guessing
-    num_train_clients = len(train_fed_loader)
+    available_clients = train_fed_loader.available_clients if args.train_all_clients else test_fed_loader.available_clients
+    num_train_clients = len(available_clients)
+    total_num_clients_to_process = args.num_epochs_centralized * num_train_clients
+    optimizer, scheduler = pfl.utils.setup_centralized_optimizer_from_args(args, model, total_num_clients_to_process)
+    # import pdb
+    # pdb.set_trace()
     _log_test(model, 0)
     start_time = time.time()
     count = 0
     for epoch in range(args.num_epochs_centralized):
         print(f'-------\nStarting epoch {epoch} \n--------')
         epoch_start_time = time.time()
-        client_list_for_epoch = rng.sample(train_fed_loader.available_clients, k=num_train_clients)
+        client_list_for_epoch = rng.sample(available_clients, k=num_train_clients)
         for client_id in client_list_for_epoch:
             current_epoch = count / num_train_clients
             client_dataloader = train_fed_loader.get_client_dataloader(client_id)
@@ -105,12 +111,14 @@ def main():
                 loss = loss_fn(yhat, y)
                 avg_loss = 0.99 * avg_loss + 0.01 * loss.item()
                 loss.backward()
-                # TODO: clip grad norm
+                if args.clip_grad_norm:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                 optimizer.step()
             count += 1
+            scheduler.step()  # Step for every client processed
 
-            # adjust lr
-            pfl.utils.adjust_optimizer_centralized_(args, optimizer, current_epoch, count)
+            # adjust lr: OLD
+            # pfl.utils.adjust_optimizer_centralized_(args, optimizer, current_epoch, count)
 
             # logging: `count` is number of devices processed so far
             if (count+1) % args.log_train_every_n_clients == 0:

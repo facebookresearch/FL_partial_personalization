@@ -76,15 +76,20 @@ def make_train_parser():
     # Training Arugments
     train_parser = parser.add_argument_group('train_args', 'Model training args')
     train_parser.add_argument('--lr', type=float, default=3.5e-4)
-    train_parser.add_argument('--lr_decay_factor', type=float, default=1.0)  # >= 1
-    train_parser.add_argument('--lr_decay_every', type=int, default=100)  # how many rounds/epochs to decay lr
     train_parser.add_argument('--central_optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
     train_parser.add_argument('--log_train_every_n_clients', type=int)  # if None: 5 times every epoch
     train_parser.add_argument('--log_test_every_n_clients', type=int)  # if None: once every epoch
     train_parser.add_argument('--num_epochs_centralized', type=int, default=100)
-    train_parser.add_argument('--num_warmup_updates', type=float, default=5000)   # centralized setting
-    train_parser.add_argument('--warmup_lr', type=float, default=1e-4)
-    train_parser.add_argument('--use_warmup', action='store_true')  # use LR warmup
+    # train_parser.add_argument('--lr_decay_factor', type=float, default=1.0)  # >= 1
+    # train_parser.add_argument('--lr_decay_every', type=int, default=100)  # how many rounds/epochs to decay lr
+    # train_parser.add_argument('--num_warmup_updates', type=float, default=5000)   # centralized setting
+    # train_parser.add_argument('--warmup_lr', type=float, default=1e-4)
+    # train_parser.add_argument('--use_warmup', action='store_true')  # use LR warmup
+    train_parser.add_argument('--lr_decay_factor', type=float, default=1.0)  # <= 1
+    train_parser.add_argument('--lr_decay_every', type=int, default=100)  # how many rounds to decay lr
+    train_parser.add_argument('--scheduler', type=str, default='const',
+                            choices=['const', 'linear', 'expo', 'const_and_cut'])
+    train_parser.add_argument('--warmup_fraction', type=float, default=0.1)
 
     return parser
 
@@ -171,7 +176,38 @@ def update_arch_params_from_arch_size(args):
     args.dropout_tr = 0
     args.dropout_io = 0
 
-def setup_centralized_optimizer_from_args(args, model, use_warmup=False):
+def setup_centralized_optimizer_from_args(args, model, num_clients_to_process):
+    lr = args.lr
+    if args.central_optimizer == 'sgd':
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    elif args.central_optimizer == 'adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    else:
+        raise ValueError(f'Unknown optimizer: {args.central_optimizer}')
+    # args: scheduler, lr_decay_factor, lr_decay_every, warmup_fraction
+    if args.scheduler == 'const':
+        lr_lambda = lambda current_step: 1.0  # mult. factor = 1.0
+    elif args.scheduler == 'linear':
+        num_warmup_steps = args.warmup_fraction * num_clients_to_process
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                return current_step / max(1.0, num_warmup_steps)
+            return max(0.0, 
+                (num_clients_to_process - current_step) / 
+                max(1.0, num_clients_to_process - num_warmup_steps)
+            )
+    elif args.scheduler == 'expo':
+        def lr_lambda(current_step):
+            return min(1.0, max(0.0, args.lr_decay_factor)) ** (current_step / num_clients_to_process)
+    elif args.scheduler == 'const_and_cut':
+        def lr_lambda(current_step):
+            factor = current_step // args.lr_decay_every
+            return args.lr_decay_factor ** factor
+
+    scheduler = LambdaLR(optimizer, lr_lambda)
+    return optimizer, scheduler
+
+def setup_centralized_optimizer_from_args_old(args, model, use_warmup=False):
     lr = args.warmup_lr if use_warmup else args.lr
     if args.central_optimizer == 'sgd':
         optimizer = torch.optim.SGD(model.parameters(), lr=lr)
