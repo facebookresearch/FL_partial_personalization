@@ -1,4 +1,5 @@
 from .emnist import EmnistFederatedDataloader
+from .gldv2 import GLDv2FederatedDataloader
 from .stack_overflow import SOFederatedDataloader
 
 def get_federated_dataloader_from_args(args):
@@ -13,6 +14,16 @@ def get_federated_dataloader_from_args(args):
         test_loader = EmnistFederatedDataloader(
             args.data_dir, client_list_fn.format('test'), 'test', 
             eval_batch_size, args.max_num_elements_per_client, shuffle=False
+        )
+    elif args.dataset.lower() == 'gldv2':
+        client_list_fn = 'dataset_statistics/gldv2_client_ids_{}.csv'
+        train_loader = GLDv2FederatedDataloader(
+            args.data_dir, client_list_fn.format('train'), 'train', 
+            train_batch_size, args.max_num_elements_per_client
+        )
+        test_loader = GLDv2FederatedDataloader(
+            args.data_dir, client_list_fn.format('test'), 'test', 
+            train_batch_size, args.max_num_elements_per_client
         )
     elif args.dataset == 'stackoverflow':
         client_list_fn = 'dataset_statistics/stackoverflow_client_ids_{}.csv'

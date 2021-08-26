@@ -1,9 +1,9 @@
-"""Create an iterator (similar to a PyTorch dataloader) from TFF stackoverflow dataset.
+"""Create an iterator (similar to a PyTorch dataloader) from TFF EMNIST dataset.
     Inspired by federated/utils/datasets/emnist_dataset.py 
 
     The main classes in this file are:
-         - EmnistClientDataloader: a dataloader for a single client in the Stack Overflow dataset
-         - EmnistFederatedDataloader: a dataloader for the Stack Overflow federated dataset
+         - EmnistClientDataloader: a dataloader for a single client in the EMNIST dataset
+         - EmnistFederatedDataloader: a dataloader for the EMNIST federated dataset
 """
 from collections import OrderedDict
 from typing import Callable, List, Tuple
@@ -40,7 +40,7 @@ class EmnistFederatedDataloader(FederatedDataloader):
         elif client_list is None:  # use all clients
             pass
         elif type(client_list) != list or len(client_list) <= 1:
-            raise ValueError(f'Stack Overflow dataset requires the list of clients to be specified.')
+            raise ValueError(f'EMNIST dataset requires the list of clients to be specified.')
         if client_list is not None:
             self.available_clients_set = set(client_list)
             self.available_clients = client_list

@@ -118,7 +118,7 @@ def make_finetune_parser():
 def add_common_args(parser):
     parser.add_argument('--data_dir', type=str, default='/checkpoint/pillutla/data')
     parser.add_argument('--dataset', type=str, required=True,
-                        choices=['emnist', 'stackoverflow'])
+                        choices=['emnist', 'stackoverflow', 'gldv2'])
     parser.add_argument('--max_num_elements_per_client', type=int, default=1000)
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--seed', type=int, default=0)
@@ -137,6 +137,7 @@ def add_model_args(parser):
     # Model-specific Arguments
     model_parser = parser.add_argument_group('model_args', 'Model args')
     model_parser.add_argument('--model_name', type=str)
+    model_parser.add_argument('--use_pretrained_model', action='store_true')
     model_parser.add_argument('--max_sequence_length', type=int, default=20)
     model_parser.add_argument('--vocab_size', type=int, default=10000)
     model_parser.add_argument('--num_oov_buckets', type=int, default=1)

@@ -104,7 +104,7 @@ def main():
             optimizer_state_dict=pfl_optim.server_optimizer.state_dict(), 
             round=comm_round)
         torch.save(to_save, f'{args.savedir}/main.pt')
-        if comm_round >= 200 and 'accuracy|mean' in metrics and 0 <= metrics['accuracy|mean'] < 0.0005:
+        if comm_round >= 400 and 'accuracy|mean' in metrics and 0 <= metrics['accuracy|mean'] < 0.00005:
             print('Exiting since accuracy is very small.')
             sys.exit(-1)
 
