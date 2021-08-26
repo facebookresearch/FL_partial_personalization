@@ -102,11 +102,11 @@ class AdapterBlock(nn.Module):
         return u
 
 
-class Transformer(PFLBaseModel):
+class WordLMTransformer(PFLBaseModel):
     def __init__(self, seq_len, vocab_size, input_dim, attn_hidden_dim, fc_hidden_dim,
                  num_attn_heads, num_layers, tied_weights=False, dropout_tr=0., dropout_io=0.,
     ):
-        super(Transformer, self).__init__()
+        super().__init__()
         print(f"""Constructing a transformer model with:
                     - seq_len = {seq_len}
                     - vocab_size = {vocab_size}
