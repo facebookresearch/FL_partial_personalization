@@ -1,5 +1,5 @@
 import torch
-from .transformer import WordLMTransformer
+from .wordlm_transformer import WordLMTransformer
 from .emnist_convnet import EmnistConvNet
 from .emnist_resnet import EmnistResNetGN
 from .gldv2_resnet import GLDv2ResNetGN

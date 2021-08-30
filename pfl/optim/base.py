@@ -6,7 +6,7 @@ import time
 from datetime import timedelta
 import torch
 
-from pfl import torch_utils
+from pfl import torch_utils, utils
 import pfl.metrics
 from .utils import get_server_optimizer
 
@@ -40,13 +40,14 @@ class FedBase:
         self.rng = random.Random(seed+123)
         self.save_client_params_to_disk = save_client_params_to_disk
         
+        self.saved_client_params = {}  # default
         if self.client_model is not None:
             print('Initializing client models')
             start_time = time.time()
             start_params = self.client_model.client_state_dict()
             if not save_client_params_to_disk:  # maintain {client_id -> client_state_dict} mapping
                 self.saved_client_params = {client_id: copy.deepcopy(start_params) for client_id in self.available_clients}
-            else:  # save client_state_dict to disk
+            else:  # save client_state_dict to disk;
                 for client_id in self.available_clients:
                     client_fn = self.get_client_fn(client_id)
                     torch.save(self.client_model.client_state_dict(), client_fn)
@@ -173,3 +174,24 @@ class FedBase:
                 collected_metrics = OrderedDict((metric_name, [metric_val]) for (metric_name, metric_val) in metrics_for_client.items())
         combined_metrics = pfl.metrics.summarize_client_metrics(sizes, collected_metrics)
         return combined_metrics
+
+    def get_client_params_for_logging(self):
+        if self.client_model is None or not self.save_client_params_to_disk:
+            to_return = self.saved_client_params
+        else:
+            to_return = {}
+            for client_id in self.available_clients:  # load saved weights to CPU
+                client_fn = self.get_client_fn(client_id)
+                state_dict = torch.load(client_fn, map_location=utils.CPU_DEVICE)
+                to_return[client_id] = state_dict
+        return to_return
+    
+    def load_client_params_from_checkpoint(self, loaded_client_params):
+        if self.client_model is None: # Nothing to do
+            return 
+        elif not self.save_client_params_to_disk:
+            self.saved_client_params = loaded_client_params
+        else:  # save client params as expected to client_fn
+            for client_id in self.available_clients:
+                client_fn = self.get_client_fn(client_id)
+                torch.save(loaded_client_params[client_id], client_fn)

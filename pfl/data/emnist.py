@@ -117,7 +117,7 @@ class EmnistClientDataloader(ClientDataloader):
         if self.shuffle:
             self.tf_dataset_iterator = iter(self.tf_dataset
                     .take(self.max_elements_per_client)
-                    .shuffle(self.max_elements_per_client)
+                    .shuffle(self.max_elements_per_client, seed=torch.randint(1<<20, (1,)).item())
                     .map(lambda ex: (tf.expand_dims(ex['pixels'], axis=0), tf.cast(ex['label'], tf.int64)),  # image: (C=1, H=28, W=28)
                          num_parallel_calls=tf.data.experimental.AUTOTUNE)
                     .batch(self.batch_size)

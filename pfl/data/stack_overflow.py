@@ -127,7 +127,7 @@ class SOClientDataloader(ClientDataloader):
         if self.shuffle:
             self.tf_dataset_iterator = iter(self.tf_dataset
                     .take(self.max_elements_per_client)
-                    .shuffle(self.max_elements_per_client)
+                    .shuffle(self.max_elements_per_client, seed=torch.randint(1<<20, (1,)).item())
                     .map(self.tokenize_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
                     .padded_batch(self.batch_size,
                                   padded_shapes=[self.max_sequence_length + 1]) 

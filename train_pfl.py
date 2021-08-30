@@ -32,7 +32,8 @@ def main():
     server_model = pfl.models.get_model_from_args(args, device).train()
     if args.pretrained_model_path is not None:
         print('Loading pretrained model from', args.pretrained_model_path)
-        state_dict = torch.load(args.pretrained_model_path, map_location=device)['model_state_dict']
+        loaded = torch.load(args.pretrained_model_path, map_location=device)
+        state_dict = loaded['model_state_dict'] if 'model_state_dict' in loaded else loaded['server_model_state_dict']
         server_model.load_state_dict(state_dict)
     server_model.print_summary(args.train_batch_size)
     server_model.split_server_and_client_params(args.personalize_on_client, args.layers_to_finetune, args.adapter_hidden_dim)
@@ -76,14 +77,14 @@ def main():
         save_client_params_to_disk=args.save_client_params_to_disk,
     )
     pfl_optim = get_pfl_optimizer(args.pfl_algo, **pfl_args)
+    del server_model  # give full ownership of server model to pfl_optim
 
     # Setup logging
     if not os.path.isdir(args.savedir):
         os.mkdir(args.savedir)
-    log_train = []
-    log_test = []
+    checkpoint_filename = f'{args.savedir}/checkpoint.pt'
 
-    def _log_test(model, comm_round):
+    def _log_test(comm_round, pfl_optim):
         nonlocal log_test
         gc.collect()
         log_start_time = time.time()
@@ -99,12 +100,7 @@ def main():
                     comm_round, (time.time() - log_start_time), metrics.get('loss|mean', -1), metrics.get('accuracy|mean', -1)
         ))
         print('-' * 100)
-        # Model save.
-        to_save = dict(model_state_dict=model.state_dict(), 
-            optimizer_state_dict=pfl_optim.server_optimizer.state_dict(), 
-            round=comm_round)
-        torch.save(to_save, f'{args.savedir}/main.pt')
-        if comm_round >= 400 and 'accuracy|mean' in metrics and 0 <= metrics['accuracy|mean'] < 0.00005:
+        if comm_round >= 200 and 'accuracy|mean' in metrics and 0 <= metrics['accuracy|mean'] < 0.0005:
             print('Exiting since accuracy is very small.')
             sys.exit(-1)
 
@@ -120,13 +116,15 @@ def main():
               f'global time: {timedelta(seconds=round(time.time() - global_start_time))}')
         start_time = time.time()
     
-    avg_loss = None
-    if not args.skip_first_log:
-        _log_test(pfl_optim.server_model, 0)
+    starting_round, avg_loss, log_train, log_test = try_restore_checkpoint_(
+        checkpoint_filename, args.logfilename, pfl_optim, args.force_restart, device
+    )
+    if not args.skip_first_log and avg_loss is None:  # no checkpoint found
+        _log_test(starting_round, pfl_optim)
     start_time = time.time()
     
     # Main training loop
-    for comm_round in range(args.num_communication_rounds):
+    for comm_round in range(starting_round, args.num_communication_rounds):
         # Adjust LR
         cur_client_lr = global_lr_fn(comm_round) * args.client_lr
         client_optimizer_args.client_lr = cur_client_lr
@@ -143,9 +141,11 @@ def main():
         if (comm_round+1) % args.log_train_every_n_rounds == 0:
             _log_train(comm_round, avg_loss)
         if (comm_round+1) % args.log_test_every_n_rounds == 0:
-            _log_test(server_model, comm_round)
+            save_checkpoint(comm_round, avg_loss, pfl_optim, checkpoint_filename)
+            _log_test(comm_round, pfl_optim)
 
-    _log_test(server_model, args.num_communication_rounds)
+    save_checkpoint(comm_round, avg_loss, pfl_optim, checkpoint_filename)
+    _log_test(args.num_communication_rounds, pfl_optim)
     print('Saved:', f'{args.logfilename}_test.csv')
     print('Total running time:', timedelta(seconds=round(time.time() - global_start_time)))
 
@@ -158,6 +158,62 @@ def get_pfl_optimizer(pfl_algo, **kwargs):
         return pfl.optim.PFLAlternatingTrain(**kwargs)
     else:
         raise ValueError(f'Unknown PFL algorithm: {pfl_algo}')
+
+def save_checkpoint(comm_round, avg_training_loss, pfl_optim, checkpoint_filename):
+    # Model save.
+    to_save = dict(
+        round=comm_round, 
+        avg_training_loss=avg_training_loss,
+        server_model_state_dict=pfl_optim.server_model.state_dict(), 
+        server_optimizer_state_dict=pfl_optim.server_optimizer.state_dict(), 
+        client_params=pfl_optim.get_client_params_for_logging(),
+        torch_rng_state=torch.random.seed(),
+        pfl_optim_rng_state=pfl_optim.rng.getstate()
+    )
+    torch.save(to_save, checkpoint_filename)
+
+def try_restore_checkpoint_(checkpoint_filename, log_filename, pfl_optim, force_restart, device):
+    if os.path.isfile(checkpoint_filename) and not force_restart:
+        # load checkpoint. Keep cpu weights on cpu but move GPU weights to our device
+        print(f'Found checkpoint: {checkpoint_filename}. Restoring state.')
+        start_time = time.time()
+        map_location = {f'cuda:{i}': str(device) for i in range(8)}
+        map_location['cpu'] = 'cpu'
+        saved_data = torch.load(checkpoint_filename, map_location=map_location)
+        # round and loss
+        starting_round = saved_data['round']  + 1  # start from the next round
+        avg_loss = saved_data['avg_training_loss']
+        # server model/optimizer and client weights
+        pfl_optim.server_model.load_state_dict(saved_data['server_model_state_dict'])
+        pfl_optim.server_optimizer.load_state_dict(saved_data['server_optimizer_state_dict'])
+        pfl_optim.load_client_params_from_checkpoint(saved_data['client_params'])
+        # seeds
+        torch.random.manual_seed(saved_data['torch_rng_state'])
+        pfl_optim.rng.setstate(saved_data['pfl_optim_rng_state'])
+        # logs
+        log_test = _load_log_from_csv(f'{log_filename}_test.csv')
+        max_round = max([d['round'] for d in log_test])
+        log_train = _load_log_from_csv(f'{log_filename}_train.csv')
+        log_train = [d for d in log_train if d['round'] <= max_round]  # discard logs for rounds which will be rerun
+        del saved_data
+        gc.collect()
+        print(f'Loaded checkpoint in', timedelta(seconds=round(time.time() - start_time)))
+    else:
+        # Start from scratch
+        print(f'No checkpoint exists (or --args.force_restart) was specified. Starting from scratch.')
+        starting_round = 0
+        avg_loss = None
+        log_train = []
+        log_test = []
+    return starting_round, avg_loss, log_train, log_test
+
+def _load_log_from_csv(fn):
+    logs = []
+    df = pd.read_csv(fn, index_col=0)
+    for i in range(df.shape[0]):
+        row = df.iloc[i].to_dict()
+        logs.append(row)
+    return logs
 
 if __name__ == '__main__':
     main()

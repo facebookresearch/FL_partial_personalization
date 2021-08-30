@@ -3,6 +3,10 @@
     - ClientDataloader
     - loss_of_batch_fn
     - metrics_of_batch_fn
+NOTE: for TFF datasets, use stateless_random operations. 
+    Pass the seed using `torch.randint(1<<20, (1,)).item()`.
+    We save the PyTorch random seed, so this allows for reproducibility across
+    restarted/restored jobs as well.
 """
 
 import torch

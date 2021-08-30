@@ -1,7 +1,19 @@
 import argparse
+from datetime import datetime
 import math
 import torch
 from torch.optim.lr_scheduler import LambdaLR
+
+# Signal handling
+import signal
+def handler(signum, frame):
+    print('\n', '-'*50)
+    print('DANGER. DANGER. DANGER.')
+    print(f"Caught signal {signum} at {datetime.now()}")
+    print('This is your premeption notice!')
+    print('-'*50, '\n\n', flush=True)
+signal.signal(signal.SIGUSR1, handler)
+
 
 CPU_DEVICE = torch.device('cpu')
 def get_device_from_arg(device_id):
@@ -131,6 +143,7 @@ def add_common_args(parser):
     parser.add_argument('--max_num_clients_for_logging', type=int, default=2000)
     parser.add_argument('--train_batch_size', type=int, default=32)
     parser.add_argument('--eval_batch_size', type=int)  # if not specified use train_batch_size
+    parser.add_argument('--force_restart', action='store_true')
 
 
 def add_model_args(parser):

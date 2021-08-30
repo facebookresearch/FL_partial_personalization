@@ -89,12 +89,13 @@ STD = torch.FloatTensor([0.229, 0.224, 0.225])
 # Map functions
 def train_map_fn(ex):
     # resize to 256 and random crop to 224 + random flip
-    # TODO: move to stateless version of transformations
-    x = tf.image.random_flip_left_right(
-            tf.image.random_crop(
+    x = tf.image.stateless_random_flip_left_right(
+            tf.image.stateless_random_crop(
                 tf.image.resize(ex['image/decoded'], (256, 256)) / 255,
-                size=(224, 224, 3)
-            )
+                size=(224, 224, 3),
+                seed=torch.randint(1<<20, (1,)).item()
+            ),
+            seed=torch.randint(1<<20, (1,)).item()
         )
     y = ex['class']
     return x, y  # x: (H, W, 3), y: tf.int64
@@ -120,7 +121,7 @@ class GLDv2ClientDataloader(ClientDataloader):
         iterator = self.tf_dataset.shuffle(self.dataset_size, seed=self.client_id)  # for the train-test split
         if self.is_train:
             # the first n elements for training and shuffle them
-            iterator = iterator.take(self.dataset_size).shuffle(self.dataset_size)
+            iterator = iterator.take(self.dataset_size).shuffle(self.dataset_size, seed=torch.randint(1<<20, (1,)).item())
             map_fn = train_map_fn
         else:
             # skip the first n elements (training) and take the next n elements
