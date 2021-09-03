@@ -2,6 +2,7 @@ import gc
 import numpy as np
 import os
 import pandas as pd
+import pickle as pkl
 import sys
 import time
 from datetime import timedelta
@@ -61,11 +62,13 @@ def main():
         warmup_fraction=args.global_warmup_fraction
     )
     global_lr_fn = pfl.utils.get_fed_global_lr_scheduler(args.num_communication_rounds, global_lr_args)
-    available_clients = train_fed_loader.available_clients if args.train_all_clients else test_fed_loader
+    available_clients = train_fed_loader.available_clients if args.train_all_clients else test_fed_loader.available_clients
+    clients_to_cache = test_fed_loader.available_clients
     print('Number of training clients for federated training:', len(available_clients))
     pfl_args = dict(
         train_fed_loader=train_fed_loader,
-        available_clients=test_fed_loader.available_clients,
+        available_clients=available_clients,
+        clients_to_cache=clients_to_cache,
         server_model=server_model, 
         server_optimizer=args.server_optimizer,
         server_lr=args.server_lr, 
@@ -75,24 +78,31 @@ def main():
         save_dir=args.savedir, 
         seed=args.seed,
         save_client_params_to_disk=args.save_client_params_to_disk,
+        client_var_l2_reg_coef=args.client_var_l2_reg_coef, 
+        client_var_prox_to_init=args.client_var_prox_to_init,
+        max_num_pfl_updates=args.max_num_pfl_updates
     )
     pfl_optim = get_pfl_optimizer(args.pfl_algo, **pfl_args)
-    del server_model  # give full ownership of server model to pfl_optim
+    del server_model  # give full ownership of `server_model` to pfl_optim
 
     # Setup logging
     if not os.path.isdir(args.savedir):
         os.mkdir(args.savedir)
     checkpoint_filename = f'{args.savedir}/checkpoint.pt'
 
-    def _log_test(comm_round, pfl_optim):
+    def _log_test(comm_round, pfl_optim, log_all_clients=False, post_finetune=False):
         nonlocal log_test
         gc.collect()
         log_start_time = time.time()
-        metrics = pfl_optim.test_all_clients(test_fed_loader, args.max_num_clients_for_logging)
+        metrics, all_metrics, client_sizes = pfl_optim.test_all_clients(test_fed_loader, args.max_num_clients_for_logging, return_all_metrics=True)
         metrics['round'] = comm_round
         log_test.append(metrics)
         # Save
         pd.DataFrame(log_test).to_csv(f'{args.logfilename}_test.csv')
+        if log_all_clients:
+            suffix = '_finetune' if post_finetune else ''
+            with open(f'{args.logfilename}_test{suffix}_all.p', 'wb') as f:
+                pkl.dump([all_metrics, client_sizes], f)
         # Print
         print('-' * 100)
         print('| checkpoint | round {:d} | time: {:5.2f}s | test loss {:5.2f} | '
@@ -124,6 +134,7 @@ def main():
     start_time = time.time()
     
     # Main training loop
+    prev_ckpt_time = time.time()
     for comm_round in range(starting_round, args.num_communication_rounds):
         # Adjust LR
         cur_client_lr = global_lr_fn(comm_round) * args.client_lr
@@ -142,17 +153,31 @@ def main():
             _log_train(comm_round, avg_loss)
         if (comm_round+1) % args.log_test_every_n_rounds == 0:
             save_checkpoint(comm_round, avg_loss, pfl_optim, checkpoint_filename)
-            _log_test(comm_round, pfl_optim)
+            prev_ckpt_time = time.time()
+            if comm_round + 1 != args.num_communication_rounds:
+                _log_test(comm_round, pfl_optim)
+        if time.time() - prev_ckpt_time >= 3600:  # save checkpoint every hour
+            save_checkpoint(comm_round, avg_loss, pfl_optim, checkpoint_filename)
+            prev_ckpt_time = time.time()
 
-    save_checkpoint(comm_round, avg_loss, pfl_optim, checkpoint_filename)
-    _log_test(args.num_communication_rounds, pfl_optim)
+    _log_test(args.num_communication_rounds, pfl_optim, log_all_clients=True, post_finetune=False)
+    save_checkpoint(args.num_communication_rounds, avg_loss, pfl_optim, checkpoint_filename)
+    # Finetune on clients
+    print('Starting finetune.')
+    start_time = time.time()
+    pfl_optim.finetune_all_clients(
+        args.num_local_epochs, args.client_optimizer, client_optimizer_args
+    )
+    print('Done finetuning in', timedelta(seconds=round(time.time() - start_time)))
+    _log_test(-1, pfl_optim, log_all_clients=True, post_finetune=True)
+
     print('Saved:', f'{args.logfilename}_test.csv')
     print('Total running time:', timedelta(seconds=round(time.time() - global_start_time)))
 
 def get_pfl_optimizer(pfl_algo, **kwargs):
     if pfl_algo.lower() == 'fedavg':
         return pfl.optim.FedAvg(**kwargs)
-    elif pfl_algo.lower() == 'pfl_joint':
+    elif pfl_algo.lower() in ['pfl_joint', 'pfl_simultaneous']:
         return pfl.optim.PFLJointTrain(**kwargs)
     elif pfl_algo.lower() in ['pfl_alternating', 'pfl_am']:
         return pfl.optim.PFLAlternatingTrain(**kwargs)
@@ -192,7 +217,7 @@ def try_restore_checkpoint_(checkpoint_filename, log_filename, pfl_optim, force_
         pfl_optim.rng.setstate(saved_data['pfl_optim_rng_state'])
         # logs
         log_test = _load_log_from_csv(f'{log_filename}_test.csv')
-        max_round = max([d['round'] for d in log_test])
+        max_round = saved_data['round'] # max([d['round'] for d in log_test])
         log_train = _load_log_from_csv(f'{log_filename}_train.csv')
         log_train = [d for d in log_train if d['round'] <= max_round]  # discard logs for rounds which will be rerun
         del saved_data

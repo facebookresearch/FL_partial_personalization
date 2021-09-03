@@ -25,8 +25,9 @@ from .dataloader import FederatedDataloader, ClientDataloader
 
 class SOFederatedDataloader(FederatedDataloader):
     def __init__(self, data_dir, client_list, split, batch_size, 
-                 max_num_elements_per_client, vocab_size, max_sequence_length,
-                 num_oov_buckets=1, shuffle=True):
+                 max_num_elements_per_client=1000, vocab_size=10000, max_sequence_length=20,
+                 num_oov_buckets=1, shuffle=True,
+                 validation_mode=False, validation_holdout=False):
         """Federated dataloader. Takes a client id and returns the dataloader for that client. 
 
         Args:
@@ -53,6 +54,8 @@ class SOFederatedDataloader(FederatedDataloader):
         self.max_sequence_length = max_sequence_length
         self.num_oov_buckets = num_oov_buckets
         self.shuffle = shuffle
+        self.validation_mode = validation_mode
+        self.validation_holdout = validation_holdout
 
         sizes_filename = f'dataset_statistics/stackoverflow_client_sizes_{split}.csv'
         self.client_sizes = pd.read_csv(sizes_filename, index_col=0, squeeze=True, dtype='string').to_dict()
@@ -60,7 +63,6 @@ class SOFederatedDataloader(FederatedDataloader):
         
         print('Loading vocab')
         start_time = time.time()
-        # vocab_dict = tff.simulation.datasets.stackoverflow.load_word_counts(cache_dir=data_dir)
         vocab_dict = load_so_word_counts(data_dir)
         vocab = list(vocab_dict.keys())[:vocab_size]
         self.tokenize_fn, self.non_vocab_idx = get_tokenizer_fn_and_nonvocab_tokens(
@@ -86,7 +88,8 @@ class SOFederatedDataloader(FederatedDataloader):
                 self.tf_fed_dataset.create_tf_dataset_for_client(client_id),
                 self.tokenize_fn, self.batch_size, self.client_sizes[client_id],
                 self.max_num_elements_per_client, 
-                self.max_sequence_length, self.shuffle
+                self.max_sequence_length, self.shuffle,
+                self.validation_mode, self.validation_holdout
             )
         else:
             raise ValueError(f'Unknown client: {client_id}')
@@ -112,7 +115,8 @@ class SOClientDataloader(ClientDataloader):
     """An iterator which wraps the tf.data iteratator to behave like a PyTorch data loader. 
     """
     def __init__(self, tf_dataset, tokenize_fn, batch_size, dataset_size,
-                 max_elements_per_client=1000, max_sequence_length=20, shuffle=True):
+                 max_elements_per_client=1000, max_sequence_length=20, shuffle=True,
+                 validation_mode=False, validation_holdout=False):
         self.tf_dataset = tf_dataset
         self.tokenize_fn = tokenize_fn
         self.batch_size = batch_size
@@ -120,35 +124,32 @@ class SOClientDataloader(ClientDataloader):
         self.max_elements_per_client = max_elements_per_client
         self.max_sequence_length = max_sequence_length
         self.shuffle = shuffle
+        if validation_mode:
+            if validation_holdout:
+                self.skip = 0
+                self.dataset_size = max(1, int(0.2 * self.dataset_size))  # 20% holdout
+            else:
+                self.skip = max(1, int(0.2 * self.dataset_size))  # skip the validation part
+                self.dataset_size = self.dataset_size - self.skip
+        else:  # no splitting required here
+            self.skip = 0
         self.tf_dataset_iterator = None
         self.reinitialize()  # initialize iterator
     
     def reinitialize(self):
+        iterator = self.tf_dataset.skip(self.skip).take(self.dataset_size)
         if self.shuffle:
-            self.tf_dataset_iterator = iter(self.tf_dataset
-                    .take(self.max_elements_per_client)
-                    .shuffle(self.max_elements_per_client, seed=torch.randint(1<<20, (1,)).item())
-                    .map(self.tokenize_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-                    .padded_batch(self.batch_size,
-                                  padded_shapes=[self.max_sequence_length + 1]) 
-                                  # +1 for bos; default pad token is 0
-                    # current shape is (batch_size, max_seq_len)
-                    .map(split_input_target_and_tranpose, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-                    # x: (seq_len, batch_size); y: (seq_len, batch_size)
-                    .prefetch(tf.data.experimental.AUTOTUNE)
-            )
-        else:
-            self.tf_dataset_iterator = iter(self.tf_dataset
-                    .take(self.max_elements_per_client)
-                    .map(self.tokenize_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-                    .padded_batch(self.batch_size,
-                                  padded_shapes=[self.max_sequence_length + 1]) 
-                                  # +1 for bos; default pad token is 0
-                    # current shape is (batch_size, max_seq_len)
-                    .map(split_input_target_and_tranpose, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-                    # x: (seq_len, batch_size); y: (seq_len, batch_size)
-                    .prefetch(tf.data.experimental.AUTOTUNE)
-            )
+            iterator = iterator.shuffle(self.max_elements_per_client, seed=torch.randint(1<<20, (1,)).item())
+        self.tf_dataset_iterator = iter(iterator
+                .map(self.tokenize_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+                .padded_batch(self.batch_size,
+                                padded_shapes=[self.max_sequence_length + 1]) 
+                                # +1 for bos; default pad token is 0
+                # current shape is (batch_size, max_seq_len)
+                .map(split_input_target_and_tranpose, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+                # x: (seq_len, batch_size); y: (seq_len, batch_size)
+                .prefetch(tf.data.experimental.AUTOTUNE)
+        )
 
     def __len__(self):
         return int(math.ceil(self.dataset_size / self.batch_size))

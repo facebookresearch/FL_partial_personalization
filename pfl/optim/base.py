@@ -13,11 +13,16 @@ from .utils import get_server_optimizer
 class FedBase:
     """Base class for FL algos
     """
-    def __init__(self, train_fed_loader, available_clients, server_model, client_model, 
+    def __init__(self, train_fed_loader, available_clients, clients_to_cache, server_model, client_model, 
                  server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm,
-                 save_dir, seed, save_client_params_to_disk=False):
+                 save_dir, seed, save_client_params_to_disk=False, stateless_clients=False):
         self.available_clients = available_clients
+        self.clients_to_cache = available_clients if clients_to_cache is None else clients_to_cache
+        self.clients_to_cache_set = set(self.clients_to_cache)
         self.train_fed_loader = train_fed_loader
+        self.stateless_clients = stateless_clients
+        # if stateless_clients:
+        #     print('Using stateless clients!')
 
         # Models
         self.server_model = server_model
@@ -45,10 +50,11 @@ class FedBase:
             print('Initializing client models')
             start_time = time.time()
             start_params = self.client_model.client_state_dict()
-            if not save_client_params_to_disk:  # maintain {client_id -> client_state_dict} mapping
-                self.saved_client_params = {client_id: copy.deepcopy(start_params) for client_id in self.available_clients}
+            self.default_client_params = copy.deepcopy(start_params)
+            if not save_client_params_to_disk:  # maintain {client_id -> client_state_dict} mapping for `clients_to_cache`
+                self.saved_client_params = {client_id: copy.deepcopy(start_params) for client_id in self.clients_to_cache}
             else:  # save client_state_dict to disk;
-                for client_id in self.available_clients:
+                for client_id in self.clients_to_cache:
                     client_fn = self.get_client_fn(client_id)
                     torch.save(self.client_model.client_state_dict(), client_fn)
             print('Initialized client models in', timedelta(seconds=round(time.time() - start_time)))
@@ -65,7 +71,8 @@ class FedBase:
         self.client_model.load_state_dict(state_dict, strict=False)
 
     def save_client_model(self, client_id):
-        if self.client_model is None: 
+        if self.client_model is None or client_id not in self.clients_to_cache:
+            # No client params to save or discard this clients state 
             return
         state_dict = self.client_model.client_state_dict()
         if self.save_client_params_to_disk:  # Save client params to disk
@@ -88,6 +95,10 @@ class FedBase:
         # return avg_loss, num_data on the client
         # TODO: set requires grad appropriately on self.combined_model
         raise NotImplementedError
+
+    def finetune_one_client(self, client_loader, num_local_epochs, client_optimizer, client_optimizer_args):
+        # default
+        return 0.0, 1
 
     def update_local_model_and_get_client_grad(self):
         """Update client_model based on combined_model and return the state_dict with the global model update.
@@ -137,7 +148,30 @@ class FedBase:
         self.server_optimizer.step(combined_grad)
         return np.average(client_losses, weights=num_data_per_client)
 
-    def test_all_clients(self, test_fed_loader, max_num_clients=5000):
+    def finetune_all_clients(self, num_local_epochs, client_optimizer, client_optimizer_args):
+        client_losses = []
+        num_data_per_client = []
+        # Run local training on each client
+        for client_id in self.available_clients:
+            # load client model 
+            self.load_client_model(client_id)
+            # update combined model to be the correct mix of local and global models and set it to train mode
+            self.reset_combined_model() 
+            # run local updates
+            client_loader = self.train_fed_loader.get_client_dataloader(client_id)
+            self.combined_model.train()
+            avg_loss, num_data = self.finetune_one_client(
+                client_loader, num_local_epochs, client_optimizer, client_optimizer_args
+            )
+            client_losses.append(avg_loss)
+            num_data_per_client.append(num_data)
+            # update local model and ignore global part (which is unchanged)
+            _ = self.update_local_model_and_get_client_grad()  # state_dict w/ server params 
+            # save updated client_model
+            self.save_client_model(client_id)
+        return np.average(client_losses, weights=num_data_per_client)
+
+    def test_all_clients(self, test_fed_loader, max_num_clients=5000, return_all_metrics=False):
         """Compute and aggregate metrics across all clients.
 
         Args:
@@ -173,7 +207,10 @@ class FedBase:
             else:
                 collected_metrics = OrderedDict((metric_name, [metric_val]) for (metric_name, metric_val) in metrics_for_client.items())
         combined_metrics = pfl.metrics.summarize_client_metrics(sizes, collected_metrics)
-        return combined_metrics
+        if return_all_metrics:
+            return combined_metrics, collected_metrics, sizes
+        else:
+            return combined_metrics
 
     def get_client_params_for_logging(self):
         if self.client_model is None or not self.save_client_params_to_disk:

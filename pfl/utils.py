@@ -38,6 +38,7 @@ def make_pfl_train_parser():
     add_common_args(parser)
     add_model_args(parser)
     parser.add_argument('--pretrained_model_path', type=str, default=None)  # if None, train from scratch
+    parser.add_argument('--validation_mode', action='store_true')  # if true, split train set into train and val
 
     # Logging Arguments
     log_parser = parser.add_argument_group('log_args', 'Logging Arguments')
@@ -48,11 +49,16 @@ def make_pfl_train_parser():
 
     # PFL Args
     pfl_parser = parser.add_argument_group('train_args', 'PFL args')
-    pfl_parser.add_argument('--pfl_algo', type=str, required=True, choices=['fedavg', 'pfl_alternating', 'pfl_joint'])
+    pfl_parser.add_argument('--pfl_algo', type=str, required=True,
+        choices=['fedavg', 'pfl_alternating', 'pfl_joint', 'pfl_simultaneous']
+    )
     pfl_parser.add_argument('--personalize_on_client', type=str, default='none')  # how to split/share the model on the client
     pfl_parser.add_argument('--layers_to_finetune', type=int, nargs='*', default=None)
     pfl_parser.add_argument('--adapter_hidden_dim', type=int, default=16)
     pfl_parser.add_argument('--save_client_params_to_disk', action='store_true')
+    pfl_parser.add_argument('--client_var_l2_reg_coef', type=float, default=0.0)
+    pfl_parser.add_argument('--client_var_prox_to_init', action='store_true')  # if true, use initialization as prox center. Else, use zero
+    pfl_parser.add_argument('--max_num_pfl_updates', type=int, default=1000)  # a very large number (in typical examples, use 2-10 local steps)
 
     # Federated Training Arugments
     fed_parser = parser.add_argument_group('train_args', 'Model training args')
@@ -173,6 +179,12 @@ def update_arch_params_from_arch_size(args):
         args.input_dim = 256
         args.attn_hidden_dim = 64
         args.fc_hidden_dim = 1024
+    elif args.arch_size == 'half':
+        args.num_attn_heads = 6
+        args.num_transformer_layers = 6
+        args.input_dim = 384
+        args.attn_hidden_dim = 64
+        args.fc_hidden_dim = 1536
     elif args.arch_size == 'medium':
         args.num_attn_heads = 8
         args.num_transformer_layers = 8

@@ -20,13 +20,13 @@ from . import FederatedDataloader, ClientDataloader, gldv2_utils
 
 class GLDv2FederatedDataloader(FederatedDataloader):
     def __init__(self, data_dir, client_list, split, batch_size, 
-                 max_num_elements_per_client=1000, shuffle=True):
+                 max_num_elements_per_client=1000, shuffle=True,
+                 validation_mode=False, validation_holdout=False):
         """Federated dataloader. Takes a client id and returns the dataloader for that client. 
 
         Args:
             data_dir ([str]): Directory containing the cached data
             client_list ([str or list or None]): List of clients or filename from which to load clients
-                client_list is ignored for this class
             split ([str]): 'train' or 'test'
             batch_size ([int]): batch size on client
             max_num_elements_per_client ([int]): maximum allowed data size
@@ -47,6 +47,8 @@ class GLDv2FederatedDataloader(FederatedDataloader):
             self.available_clients = client_list
         self.batch_size = batch_size
         self.max_num_elements_per_client = max_num_elements_per_client
+        self.validation_mode = validation_mode
+        self.validation_holdout = validation_holdout
 
         sizes_filename = f'dataset_statistics/gldv2_client_sizes_{split}.csv'
         self.client_sizes = pd.read_csv(sizes_filename, index_col=0, squeeze=True, dtype='string').to_dict()
@@ -57,6 +59,7 @@ class GLDv2FederatedDataloader(FederatedDataloader):
         self.tf_fed_dataset = gldv2_utils.load_data(cache_dir=data_dir)[0]  # load only the train dataset
         if client_list is None:  # use all clients
             self.available_clients = self.tf_fed_dataset.client_ids
+            self.available_clients_set = set(self.tf_fed_dataset.client_ids)
         print(f'Loaded data in {round(time.time() - start_time, 2)} seconds')
 
     def get_client_dataloader(self, client_id):
@@ -64,7 +67,8 @@ class GLDv2FederatedDataloader(FederatedDataloader):
             return GLDv2ClientDataloader(
                 self.tf_fed_dataset.create_tf_dataset_for_client(client_id),
                 self.batch_size, self.client_sizes[client_id], int(client_id),
-                self.max_num_elements_per_client, self.is_train
+                self.max_num_elements_per_client, self.is_train,
+                self.validation_mode, self.validation_holdout
             )
         else:
             raise ValueError(f'Unknown client: {client_id}')
@@ -93,9 +97,9 @@ def train_map_fn(ex):
             tf.image.stateless_random_crop(
                 tf.image.resize(ex['image/decoded'], (256, 256)) / 255,
                 size=(224, 224, 3),
-                seed=torch.randint(1<<20, (1,)).item()
+                seed=torch.randint(1<<20, (2,)).numpy()
             ),
-            seed=torch.randint(1<<20, (1,)).item()
+            seed=torch.randint(1<<20, (2,)).numpy()
         )
     y = ex['class']
     return x, y  # x: (H, W, 3), y: tf.int64
@@ -107,25 +111,39 @@ def test_map_fn(ex):
 class GLDv2ClientDataloader(ClientDataloader):
     """An iterator which wraps the tf.data iteratator to behave like a PyTorch data loader. 
     """
-    def __init__(self, tf_dataset, batch_size, dataset_size, client_id, max_elements_per_client, is_train):
+    def __init__(
+        self, tf_dataset, batch_size, dataset_size, client_id, max_elements_per_client, is_train,
+        validation_mode=False, validation_holdout=False,
+    ):
         self.tf_dataset = tf_dataset
         self.batch_size = batch_size
-        self.dataset_size = min(dataset_size, max_elements_per_client)  # Number of datapoints in client
+        self.original_dataset_size = min(dataset_size, max_elements_per_client)  # Number of datapoints in client
         self.client_id = client_id  # int
         self.max_elements_per_client = max_elements_per_client
         self.is_train = is_train
+        if not self.is_train:  # test
+            self.skip = self.original_dataset_size  # skip the train part
+            self.dataset_size = self.original_dataset_size
+        elif validation_mode:
+            if validation_holdout:
+                self.skip = 0
+                self.dataset_size = max(1, int(0.2 * self.original_dataset_size))  # 20% holdout
+            else:
+                self.skip = max(1, int(0.2 * self.original_dataset_size))  # skip the validation part
+                self.dataset_size = self.original_dataset_size - self.skip
+        else:
+            self.skip = 0
+            self.dataset_size = self.original_dataset_size
         self.tf_dataset_iterator = None
         self.reinitialize()  # initialize iterator
     
     def reinitialize(self):
-        iterator = self.tf_dataset.shuffle(self.dataset_size, seed=self.client_id)  # for the train-test split
+        iterator = self.tf_dataset.shuffle(self.original_dataset_size, seed=self.client_id)  # for the train-test split
+        iterator = iterator.skip(self.skip).take(self.dataset_size)
         if self.is_train:
-            # the first n elements for training and shuffle them
-            iterator = iterator.take(self.dataset_size).shuffle(self.dataset_size, seed=torch.randint(1<<20, (1,)).item())
+            iterator = iterator.shuffle(self.dataset_size, seed=torch.randint(1<<20, (1,)).item())
             map_fn = train_map_fn
         else:
-            # skip the first n elements (training) and take the next n elements
-            iterator = iterator.skip(self.dataset_size).take(self.dataset_size)
             map_fn = test_map_fn
         self.tf_dataset_iterator = iter(iterator
                 .map(map_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)

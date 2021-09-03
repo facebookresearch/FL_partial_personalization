@@ -22,7 +22,8 @@ from . import FederatedDataloader, ClientDataloader
 
 class EmnistFederatedDataloader(FederatedDataloader):
     def __init__(self, data_dir, client_list, split, batch_size, 
-                 max_num_elements_per_client=1000, shuffle=True):
+                 max_num_elements_per_client=1000, shuffle=True,
+                 validation_mode=False, validation_holdout=False):
         """Federated dataloader. Takes a client id and returns the dataloader for that client. 
 
         Args:
@@ -47,6 +48,8 @@ class EmnistFederatedDataloader(FederatedDataloader):
         self.batch_size = batch_size
         self.max_num_elements_per_client = max_num_elements_per_client
         self.shuffle = shuffle
+        self.validation_mode = validation_mode
+        self.validation_holdout = validation_holdout
 
         # Load mean and std
         # Note: mean and std are saved using the command
@@ -80,7 +83,8 @@ class EmnistFederatedDataloader(FederatedDataloader):
             return EmnistClientDataloader(
                 self.tf_fed_dataset.create_tf_dataset_for_client(client_id),
                 self.mean, self.std, self.batch_size, self.client_sizes[client_id],
-                self.max_num_elements_per_client, self.shuffle
+                self.max_num_elements_per_client, self.shuffle,
+                validation_mode=self.validation_mode, validation_holdout=self.validation_holdout
             )
         else:
             raise ValueError(f'Unknown client: {client_id}')
@@ -102,35 +106,39 @@ class EmnistFederatedDataloader(FederatedDataloader):
 class EmnistClientDataloader(ClientDataloader):
     """An iterator which wraps the tf.data iteratator to behave like a PyTorch data loader. 
     """
-    def __init__(self, tf_dataset, mean, std, batch_size, dataset_size, max_elements_per_client=1000, shuffle=True):
+    def __init__(
+        self, tf_dataset, mean, std, batch_size, dataset_size, max_elements_per_client=1000, shuffle=True,
+        validation_mode=False, validation_holdout=False
+    ):
         self.tf_dataset = tf_dataset
         self.mean = mean
         self.std = std
         self.batch_size = batch_size
         self.dataset_size = min(dataset_size, max_elements_per_client)  # Number of datapoints in client
-        self.max_elements_per_client = max_elements_per_client
         self.shuffle = shuffle
+        if validation_mode:
+            if validation_holdout:
+                self.skip = 0
+                self.dataset_size = max(1, int(0.2 * self.dataset_size))  # 20% holdout
+            else:
+                self.skip = max(1, int(0.2 * self.dataset_size))  # skip the validation part
+                self.dataset_size = self.dataset_size - self.skip
+        else:
+            self.skip = 0
         self.tf_dataset_iterator = None
         self.reinitialize()  # initialize iterator
     
     def reinitialize(self):
+        iterator = self.tf_dataset.skip(self.skip).take(self.dataset_size)
         if self.shuffle:
-            self.tf_dataset_iterator = iter(self.tf_dataset
-                    .take(self.max_elements_per_client)
-                    .shuffle(self.max_elements_per_client, seed=torch.randint(1<<20, (1,)).item())
+            iterator = iterator.shuffle(self.dataset_size, seed=torch.randint(1<<20, (1,)).item())
+        self.tf_dataset_iterator = iter(iterator
+                    .shuffle(self.dataset_size, seed=torch.randint(1<<20, (1,)).item())
                     .map(lambda ex: (tf.expand_dims(ex['pixels'], axis=0), tf.cast(ex['label'], tf.int64)),  # image: (C=1, H=28, W=28)
                          num_parallel_calls=tf.data.experimental.AUTOTUNE)
                     .batch(self.batch_size)
                     .prefetch(tf.data.experimental.AUTOTUNE)
-            )
-        else:
-            self.tf_dataset_iterator = iter(self.tf_dataset
-                    .take(self.max_elements_per_client)
-                    .map(lambda ex: (tf.expand_dims(ex['pixels'], axis=0), tf.cast(ex['label'], tf.int64)),  # image: (C=1, H=28, W=28)
-                         num_parallel_calls=tf.data.experimental.AUTOTUNE)
-                    .batch(self.batch_size)
-                    .prefetch(tf.data.experimental.AUTOTUNE)
-            )
+        )
 
     def __len__(self):
         return int(math.ceil(self.dataset_size / self.batch_size))

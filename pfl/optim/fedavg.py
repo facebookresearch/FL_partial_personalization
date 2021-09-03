@@ -5,12 +5,12 @@ from .base import FedBase
 from .utils import get_client_optimizer
 
 class FedAvg(FedBase):
-    def __init__(self, train_fed_loader, available_clients, server_model,
+    def __init__(self, train_fed_loader, available_clients, clients_to_cache, server_model,
                  server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm,
-                 save_dir, seed, save_client_params_to_disk=False):
+                 save_dir, seed, save_client_params_to_disk=False, **kwargs):
         client_model = None  # FedAvg does not have a client model
         super().__init__(
-            train_fed_loader, available_clients, server_model, client_model, 
+            train_fed_loader, available_clients, clients_to_cache, server_model, client_model, 
             server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm, save_dir, seed,
             save_client_params_to_disk
         )
