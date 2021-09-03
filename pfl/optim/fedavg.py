@@ -8,11 +8,11 @@ class FedAvg(FedBase):
     def __init__(self, train_fed_loader, available_clients, clients_to_cache, server_model,
                  server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm,
                  save_dir, seed, save_client_params_to_disk=False, **kwargs):
-        client_model = None  # FedAvg does not have a client model
+        client_model = None  # FedAvg does not have a client model and it is stateless
         super().__init__(
             train_fed_loader, available_clients, clients_to_cache, server_model, client_model, 
             server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm, save_dir, seed,
-            save_client_params_to_disk
+            save_client_params_to_disk, stateless_clients=True
         )
     
     @torch.no_grad()

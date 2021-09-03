@@ -62,7 +62,10 @@ def main():
         warmup_fraction=args.global_warmup_fraction
     )
     global_lr_fn = pfl.utils.get_fed_global_lr_scheduler(args.num_communication_rounds, global_lr_args)
-    available_clients = train_fed_loader.available_clients if args.train_all_clients else test_fed_loader.available_clients
+    if args.stateless_clients:  # use all available clients for training
+        available_clients = train_fed_loader.available_clients
+    else:  # use only clients in the test set for training
+        available_clients = test_fed_loader.available_clients
     clients_to_cache = test_fed_loader.available_clients
     print('Number of training clients for federated training:', len(available_clients))
     pfl_args = dict(
@@ -78,6 +81,7 @@ def main():
         save_dir=args.savedir, 
         seed=args.seed,
         save_client_params_to_disk=args.save_client_params_to_disk,
+        stateless_clients=args.stateless_clients,
         client_var_l2_reg_coef=args.client_var_l2_reg_coef, 
         client_var_prox_to_init=args.client_var_prox_to_init,
         max_num_pfl_updates=args.max_num_pfl_updates

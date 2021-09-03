@@ -10,13 +10,13 @@ class SplitFLBase(FedBase):
     """
     def __init__(self, train_fed_loader, available_clients, clients_to_cache, server_model, client_model,
                  server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm,
-                 save_dir, seed, save_client_params_to_disk,
+                 save_dir, seed, save_client_params_to_disk, stateless_clients,
                  client_var_l2_reg_coef, client_var_prox_to_init,
                  max_num_pfl_updates):
         super().__init__(
             train_fed_loader, available_clients, clients_to_cache, server_model, client_model, 
             server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm, save_dir, seed,
-            save_client_params_to_disk
+            save_client_params_to_disk, stateless_clients
         )
         client_params = list(self.combined_model.client_parameters())
         server_params = list(self.combined_model.server_parameters())
@@ -94,7 +94,7 @@ class SplitFLBase(FedBase):
             client_optimizer_name, client_optimizer_args
     ):
         total_num_local_steps = num_local_epochs * len(client_loader)
-        # Optimize client parameters first
+        # Optimize client parameters only
         self.combined_model.client_params_requires_grad_(True)
         self.combined_model.server_params_requires_grad_(False)
         client_optimizer, client_scheduler = get_client_optimizer(

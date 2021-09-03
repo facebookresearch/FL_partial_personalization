@@ -21,8 +21,8 @@ class FedBase:
         self.clients_to_cache_set = set(self.clients_to_cache)
         self.train_fed_loader = train_fed_loader
         self.stateless_clients = stateless_clients
-        # if stateless_clients:
-        #     print('Using stateless clients!')
+        if stateless_clients:
+            print('Using stateless clients!!')
 
         # Models
         self.server_model = server_model
@@ -59,19 +59,24 @@ class FedBase:
                     torch.save(self.client_model.client_state_dict(), client_fn)
             print('Initialized client models in', timedelta(seconds=round(time.time() - start_time)))
 
-    def load_client_model(self, client_id):
+    def load_client_model(self, client_id, test=False):
         if self.client_model is None: 
             return
-        if self.save_client_params_to_disk:  # load client params from disk
-            device = next(self.server_model.parameters()).device
-            client_fn = self.get_client_fn(client_id)
-            state_dict = torch.load(client_fn, map_location=device)
-        else:  # load client params from dictionary
-            state_dict = self.saved_client_params[client_id]
+        elif self.stateless_clients and (not test):  # load default client params
+            state_dict = self.default_client_params  
+        elif client_id not in self.clients_to_cache:  # expect to find cached params but not found
+            raise ValueError(f'Client {client_id} not found!')
+        else:  # load cached client params
+            if self.save_client_params_to_disk:  # load client params from disk
+                device = next(self.server_model.parameters()).device
+                client_fn = self.get_client_fn(client_id)
+                state_dict = torch.load(client_fn, map_location=device)
+            else:  # load client params from dictionary
+                state_dict = self.saved_client_params[client_id]
         self.client_model.load_state_dict(state_dict, strict=False)
 
     def save_client_model(self, client_id):
-        if self.client_model is None or client_id not in self.clients_to_cache:
+        if (self.client_model is None) or (client_id not in self.clients_to_cache):
             # No client params to save or discard this clients state 
             return
         state_dict = self.client_model.client_state_dict()
@@ -113,7 +118,7 @@ class FedBase:
         client_deltas = []
         num_data_per_client = []
 
-        # Sample clients
+        # Sample from available clients
         sampled_clients = self.sample_clients(num_clients_per_round)
 
         # Run local training on each client
@@ -151,15 +156,15 @@ class FedBase:
     def finetune_all_clients(self, num_local_epochs, client_optimizer, client_optimizer_args):
         client_losses = []
         num_data_per_client = []
-        # Run local training on each client
-        for client_id in self.available_clients:
+        # Run local training on each client only on cached clients
+        for client_id in self.clients_to_cache:
             # load client model 
             self.load_client_model(client_id)
             # update combined model to be the correct mix of local and global models and set it to train mode
             self.reset_combined_model() 
+            self.combined_model.train()
             # run local updates
             client_loader = self.train_fed_loader.get_client_dataloader(client_id)
-            self.combined_model.train()
             avg_loss, num_data = self.finetune_one_client(
                 client_loader, num_local_epochs, client_optimizer, client_optimizer_args
             )
@@ -176,6 +181,8 @@ class FedBase:
 
         Args:
             test_fed_loader (FederatedDataloader): Test federated loader.
+                Requires `test_fed_loader.available_clients` to be found within `self.clients_to_cache`
+                in the stateless personalization setting.
             max_num_clients (int, optional): Maximum number of clients to evaluate on. Defaults to 5000.
 
         Returns:
@@ -185,13 +192,12 @@ class FedBase:
         if len(test_fed_loader) > max_num_clients:
             rng = random.Random(0)
             list_of_clients = rng.sample(list_of_clients, max_num_clients)
-        device = next(self.server_model.parameters()).device
         
         collected_metrics = None
         sizes = []
         for client_id in list_of_clients:
             # load client model 
-            self.load_client_model(client_id)
+            self.load_client_model(client_id, test=True)
             # update combined model to be the correct mix of local and global models and set it to eval mode
             self.reset_combined_model()
             self.combined_model.eval()
