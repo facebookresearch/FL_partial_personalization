@@ -62,11 +62,11 @@ def main():
         warmup_fraction=args.global_warmup_fraction
     )
     global_lr_fn = pfl.utils.get_fed_global_lr_scheduler(args.num_communication_rounds, global_lr_args)
-    if args.stateless_clients:  # use all available clients for training
+    if args.stateless_clients and args.train_all_clients:  # use all available clients for training
         available_clients = train_fed_loader.available_clients
     else:  # use only clients in the test set for training
         available_clients = test_fed_loader.available_clients
-    clients_to_cache = test_fed_loader.available_clients
+    clients_to_cache = test_fed_loader.available_clients  # cache the local models for test clients to test
     print('Number of training clients for federated training:', len(available_clients))
     pfl_args = dict(
         train_fed_loader=train_fed_loader,
@@ -86,6 +86,8 @@ def main():
         client_var_prox_to_init=args.client_var_prox_to_init,
         max_num_pfl_updates=args.max_num_pfl_updates
     )
+    if args.pfl_algo.lower() == 'pfedme':
+        pfl_args['pfedme_reg_param'] = args.pfedme_l2_reg_coef
     pfl_optim = get_pfl_optimizer(args.pfl_algo, **pfl_args)
     del server_model  # give full ownership of `server_model` to pfl_optim
 
@@ -169,11 +171,14 @@ def main():
     # Finetune on clients
     print('Starting finetune.')
     start_time = time.time()
-    pfl_optim.finetune_all_clients(
+    _, is_updated = pfl_optim.finetune_all_clients(
         args.num_local_epochs, args.client_optimizer, client_optimizer_args
     )
-    print('Done finetuning in', timedelta(seconds=round(time.time() - start_time)))
-    _log_test(-1, pfl_optim, log_all_clients=True, post_finetune=True)
+    if is_updated:
+        print('Done finetuning in', timedelta(seconds=round(time.time() - start_time)))
+        _log_test(-1, pfl_optim, log_all_clients=True, post_finetune=True)
+    else:
+        print('No finetuning necessary')
 
     print('Saved:', f'{args.logfilename}_test.csv')
     print('Total running time:', timedelta(seconds=round(time.time() - global_start_time)))
@@ -185,6 +190,8 @@ def get_pfl_optimizer(pfl_algo, **kwargs):
         return pfl.optim.PFLJointTrain(**kwargs)
     elif pfl_algo.lower() in ['pfl_alternating', 'pfl_am']:
         return pfl.optim.PFLAlternatingTrain(**kwargs)
+    elif pfl_algo.lower() == 'pfedme':
+        return pfl.optim.PFedMe(**kwargs)
     else:
         raise ValueError(f'Unknown PFL algorithm: {pfl_algo}')
 

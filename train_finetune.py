@@ -20,9 +20,7 @@ def main():
     args = parser.parse_args()
     pfl.utils.update_arch_params_from_arch_size(args)
     print('Args', '-'*50, '\n', args, '\n', '-'*50)
-    torch.manual_seed(args.seed)
-    tf.random.set_seed(args.seed+1)  # for TFF dataloaders
-    rng = random.Random(args.seed+10)
+    torch.manual_seed(args.seed+25)
     device = pfl.utils.get_device_from_arg(args.device)
     pfl.utils.tf_hide_other_gpus(args.device)
     print('Using device:', device)
@@ -31,13 +29,22 @@ def main():
     # Setup model
     start_time = time.time()
     model = pfl.models.get_model_from_args(args, device).train()
-    model_state_dict = torch.load(args.modelfilename, map_location=device)['model_state_dict']
-    model.load_pretrained_and_prepare(
-        model_state_dict, args.train_mode, layers_to_finetune=args.layers_to_finetune,
+    if args.pretrained_model_path is None:
+        raise ValueError('--pretrained_model_path must be specified for the finetuning!')
+    loaded = torch.load(args.pretrained_model_path, map_location=device)
+    model_state_dict = loaded['model_state_dict'] if 'model_state_dict' in loaded else loaded['server_model_state_dict']
+    model.load_state_dict(model_state_dict, strict=False)  # load server params
+    model.split_server_and_client_params(
+        args.personalize_on_client, layers_to_client=args.layers_to_finetune,
         adapter_hidden_dim=args.adapter_hidden_dim,
     )
+    saved_client_params = loaded['client_params'] if 'client_params' in loaded else {}
     model.print_summary(args.train_batch_size)
     print(f'Setup model in', timedelta(seconds=round(time.time() - start_time)))
+    client_params = list(model.client_parameters())
+    server_params = list(model.server_parameters())
+    print(f"""# Client params = {sum(v.view(-1).shape[0] for v in client_params)} ({len(client_params)} weights/biases)""")
+    print(f"""# Server params = {sum(v.view(-1).shape[0] for v in server_params)} ({len(server_params)} weights/biases)""")
  
     # Setup dataloaders
     start_time = time.time()
@@ -64,8 +71,9 @@ def main():
         start_time = time.time()
         client_trainloader = train_fed_loader.get_client_dataloader(client_id)
         client_testloader = test_fed_loader.get_client_dataloader(client_id)
+        client_params = saved_client_params[client_id] if len(saved_client_params) != 0 else None
         out = finetune_for_one_client(
-            args, model, client_trainloader, client_testloader, loss_fn, metrics_fn, device
+            args, model, client_params, client_trainloader, client_testloader, loss_fn, metrics_fn, device
         )
         per_client_train_sizes.append(out[0])
         per_client_train_metrics.append(out[1])
@@ -81,15 +89,33 @@ def main():
     test_metrics_summary = summarize_personalized_metrics(per_client_test_sizes, per_client_test_metrics)
     
     # Save and quit
-    train_metrics_summary.to_csv(f'{args.logfilename}_train.csv')
-    test_metrics_summary.to_csv(f'{args.logfilename}_test.csv')
-    with open(f'{args.logfilename}_all.p', 'wb') as f:
+    train_metrics_summary.to_csv(f'{args.logfilename}_train_finetune.csv')
+    test_metrics_summary.to_csv(f'{args.logfilename}_test_finetune.csv')
+    with open(f'{args.logfilename}_all_finetune.p', 'wb') as f:
         pkl.dump([per_client_train_sizes, per_client_train_metrics, per_client_test_sizes, per_client_test_metrics], f)
-    print(f'Saved: {args.logfilename}_{{train,test}}.csv and _all.p')
+    print(f'Saved: {args.logfilename}_{{train,test}}_finetune.csv and _all_finetune.p')
 
-def finetune_for_one_client(args, pretrained_model, trainloader, testloader, loss_fn, metrics_fn, device):
+    # Print
+    print('Test metrics summary:')
+    print(test_metrics_summary[f'accuracy|mean'])
+
+def finetune_for_one_client(
+    args, pretrained_model, client_params, trainloader, testloader, loss_fn, metrics_fn, device
+):
     # copy model (do not modify original one)
     model = copy.deepcopy(pretrained_model).to(device) 
+    if args.client_var_prox_to_init:
+        prox_center = [v.detach() for v in pretrained_model.client_parameters()]  # pretrained model weights
+    else:
+        prox_center = None
+    if client_params is not None and not args.stateless_clients:
+        model.load_state_dict(client_params, strict=False)
+    # Train only client params and not server params
+    model.client_params_requires_grad_(True)
+    model.server_params_requires_grad_(False)
+    # Init other parameters
+    max_num_updates = len(trainloader) * args.num_epochs_personalization 
+    optimizer, scheduler = pfl.utils.setup_personalized_optimizer_from_args(args, model, max_num_updates)
 
     # log
     print('Epoch|Train Loss|Train Acc.|Test Loss|Test Acc.|LR')
@@ -112,34 +138,38 @@ def finetune_for_one_client(args, pretrained_model, trainloader, testloader, los
     train_size = _log(0, train_metrics, trainloader, is_test=False)
     test_size = _log(0, test_metrics, testloader, is_test=True)
 
-    if args.use_epochs_for_personalization:  # Note: This does not work for stack overflow
-        max_num_updates = len(trainloader) * args.num_epochs_personalization 
-    else:
-        max_num_updates = args.num_updates_personalization
-    optimizer, scheduler = pfl.utils.setup_personalized_optimizer_from_args(args, model, max_num_updates)
-
     num_updates = 0
     for epoch in range(1000):  # maximum number of epochs on local data
-        if num_updates >= max_num_updates:
-            # done personalization
+        if num_updates >= max_num_updates: # done personalization
             break
         for x, y in trainloader:
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad()
             yhat = model(x)
-            loss = loss_fn(yhat, y)
+            loss = loss_fn(yhat, y) + get_finetune_l2_penalty(args, model, prox_center)
             loss.backward()
-            # TODO: clip grad norm
+            if args.clip_grad_norm:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
             optimizer.step()
             scheduler.step()
             num_updates += 1
-            if num_updates >= max_num_updates:
-                # jump directly to logging
+            if num_updates >= max_num_updates: # jump directly to logging
                 continue
         _log(epoch+1, train_metrics, trainloader, is_test=False)
         _log(epoch+1, test_metrics, testloader, is_test=True)
     # access metric value using metrics_df.at[epoch, metric_name]
     return train_size, pd.DataFrame(train_metrics).T, test_size, pd.DataFrame(test_metrics).T
+
+def get_finetune_l2_penalty(args, model, prox_center):
+    l2reg = args.client_var_l2_reg_coef
+    if l2reg <= 1e-10:
+        return 0.0
+    elif prox_center is None:  # plain l2 norm
+        client_params = model.client_parameters()
+        return l2reg * sum(torch.norm(v.reshape(-1))**2 for v in client_params)
+    else:  # l2 norm difference to prox center
+        client_params = model.client_parameters()
+        return l2reg * sum(torch.norm(v.reshape(-1) - v1.reshape(-1))**2 for (v, v1) in zip(client_params, prox_center))
 
 def summarize_personalized_metrics(sizes_lst, metrics_lst):
     # metrics_lst[i]: DataFrame with personalization logs of client i

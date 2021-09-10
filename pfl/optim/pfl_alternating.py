@@ -14,7 +14,7 @@ class PFLAlternatingTrain(SplitFLBase):
                  server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm,
                  save_dir, seed, save_client_params_to_disk=False, stateless_clients=False,
                  client_var_l2_reg_coef=0.0, client_var_prox_to_init=False,
-                 max_num_pfl_updates=1000):
+                 max_num_pfl_updates=1000, **kwargs):
         client_model = copy.deepcopy(server_model)  # not null
         super().__init__(
             train_fed_loader, available_clients, clients_to_cache, server_model, client_model, 

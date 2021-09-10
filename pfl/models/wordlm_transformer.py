@@ -169,72 +169,13 @@ class WordLMTransformer(PFLBaseModel):
         print(summary(self, input_size=(self.seq_len, train_batch_size), 
                       dtypes=[torch.int64], device=device))
 
-    def load_pretrained_and_prepare(self, state_dict, train_mode, layers_to_finetune, adapter_hidden_dim):
-        """ Load state_dict, initialize finetune modules and set requires_grad to freeze weights.
-        """
-        assert train_mode in ['train', 'finetune', 'finetune_tr_layer', 
-                              'finetune_inp_layer', 'finetune_out_layer',
-                              'adapter', 'prefix']
-        # load state_dict 
-        self.load_state_dict(state_dict, strict=False)
-
-        # Untie weights for IO layers if required
-        if self.tied_weights and train_mode in ['finetune_inp_layer', 'finetune_out_layer']:
-            self.tied_weights = False
-            self.decoder = nn.Linear(*self.word_embedding.weight.t().shape, bias=False) # hidden dim -> vocab size
-            with torch.no_grad():  # initialize with word embedding
-                self.decoder.weight.copy_(self.word_embedding.weight)
-            if train_mode in ['finetune_inp_layer']:  
-                # finetune only the word embedding
-                self.decoder.weight.requires_grad_(False)
-                self.word_embedding.weight.requires_grad_(True)
-            elif train_mode in ['finetune_out_layer']:
-                # finetune only the linear layer
-                self.decoder.weight.requires_grad_(True)
-                self.word_embedding.weight.requires_grad_(False)
-
-        if layers_to_finetune is None:  # do not fine tune
-            layers_to_finetune = []
-        if train_mode == 'finetune_tr_layer' and len(layers_to_finetune) is None:
-            raise ValueError(f'No transformer layers to finetune. Nothing to do')
-
-        # Set requires_grad based on `train_mode`
-        if train_mode in ['train', 'finetune']:  # all parameters are to be tuned
-            def do_finetune(name):
-                return True
-        elif 'finetune_tr_layer' in train_mode:
-            # Finetune a specific transformer layer
-            def do_finetune(name):
-                return any([f'transformer.{i}' in name for i in layers_to_finetune])
-        elif train_mode in ['finetune_inp_layer']:
-            # Fine tune positional and word embeddings
-            def do_finetune(name):
-                return ('embedding' in name)
-        elif train_mode in ['finetune_out_layer']:
-            # Fine tune final linear layer
-            def do_finetune(name):
-                return ('bias' == name) or ('decoder' in name)
-        elif train_mode in ['adapter']:
-            # Train adapter modules (+ batch norm)
-            def do_finetune(name):
-                return ('adapter' in name) or ('layernorm' in name)
-            # Add adapter modules
-            for block in self.transformer:
-                block.add_adapters(adapter_hidden_dim)
-        else:
-            raise ValueError(f'Unknown train_mode: {train_mode}')
-
-        # set requires_grad for those parameters which need to be modified
-        for name, param in self.named_parameters():
-            param.requires_grad_(do_finetune(name))
-    
     def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim):
         """ Initialize adapter modules if necessary and split parameters into server_parameters and client_parameters.
         """
         device = next(self.parameters()).device
         if self.is_on_client is not None:
             raise ValueError('This model has already been split across clients and server.')
-        assert client_mode in ['none', 'tr_layer', 'inp_layer', 'out_layer', 'adapter', 'prefix', 'interpolate']
+        assert client_mode in ['none', 'tr_layer', 'inp_layer', 'out_layer', 'adapter', 'interpolate', 'finetune']
         is_on_server = None
 
         # Untie weights for IO layers if required
@@ -275,6 +216,9 @@ class WordLMTransformer(PFLBaseModel):
         elif client_mode == 'interpolate':
             is_on_client = lambda _: True
             is_on_server = lambda _: True
+        elif client_mode == 'finetune':  # all on client
+            is_on_client = lambda _: True
+            is_on_server = lambda _: False
         else:
             raise ValueError(f'Unknown client_mode: {client_mode}')
         if is_on_server is None:

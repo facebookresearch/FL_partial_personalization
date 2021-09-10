@@ -154,6 +154,9 @@ class FedBase:
         return np.average(client_losses, weights=num_data_per_client)
 
     def finetune_all_clients(self, num_local_epochs, client_optimizer, client_optimizer_args):
+        # return loss, is_updated
+        if self.client_model is None:  # skip finetuning if no client model
+            return 0.0, False
         client_losses = []
         num_data_per_client = []
         # Run local training on each client only on cached clients
@@ -174,7 +177,7 @@ class FedBase:
             _ = self.update_local_model_and_get_client_grad()  # state_dict w/ server params 
             # save updated client_model
             self.save_client_model(client_id)
-        return np.average(client_losses, weights=num_data_per_client)
+        return np.average(client_losses, weights=num_data_per_client), True
 
     def test_all_clients(self, test_fed_loader, max_num_clients=5000, return_all_metrics=False):
         """Compute and aggregate metrics across all clients.

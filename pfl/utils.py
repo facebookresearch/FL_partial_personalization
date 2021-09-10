@@ -37,8 +37,6 @@ def make_pfl_train_parser():
     parser = argparse.ArgumentParser()
     add_common_args(parser)
     add_model_args(parser)
-    parser.add_argument('--pretrained_model_path', type=str, default=None)  # if None, train from scratch
-    parser.add_argument('--validation_mode', action='store_true')  # if true, split train set into train and val
 
     # Logging Arguments
     log_parser = parser.add_argument_group('log_args', 'Logging Arguments')
@@ -50,7 +48,7 @@ def make_pfl_train_parser():
     # PFL Args
     pfl_parser = parser.add_argument_group('train_args', 'PFL args')
     pfl_parser.add_argument('--pfl_algo', type=str, required=True,
-        choices=['fedavg', 'pfl_alternating', 'pfl_joint', 'pfl_simultaneous']
+        choices=['fedavg', 'pfl_alternating', 'pfl_joint', 'pfl_simultaneous', 'pfedme']
     )
     pfl_parser.add_argument('--stateless_clients', action='store_true')  # if True, clients cannot maintain state
     pfl_parser.add_argument('--personalize_on_client', type=str, default='none')  # how to split/share the model on the client
@@ -60,6 +58,8 @@ def make_pfl_train_parser():
     pfl_parser.add_argument('--client_var_l2_reg_coef', type=float, default=0.0)
     pfl_parser.add_argument('--client_var_prox_to_init', action='store_true')  # if true, use initialization as prox center. Else, use zero
     pfl_parser.add_argument('--max_num_pfl_updates', type=int, default=1000)  # a very large number (in typical examples, use 2-10 local steps)
+    # other baselines
+    pfl_parser.add_argument('--pfedme_l2_reg_coef', type=float, default=1e-6)
 
     # Federated Training Arugments
     fed_parser = parser.add_argument_group('train_args', 'Model training args')
@@ -99,11 +99,6 @@ def make_train_parser():
     train_parser.add_argument('--log_train_every_n_clients', type=int)  # if None: 5 times every epoch
     train_parser.add_argument('--log_test_every_n_clients', type=int)  # if None: once every epoch
     train_parser.add_argument('--num_epochs_centralized', type=int, default=100)
-    # train_parser.add_argument('--lr_decay_factor', type=float, default=1.0)  # >= 1
-    # train_parser.add_argument('--lr_decay_every', type=int, default=100)  # how many rounds/epochs to decay lr
-    # train_parser.add_argument('--num_warmup_updates', type=float, default=5000)   # centralized setting
-    # train_parser.add_argument('--warmup_lr', type=float, default=1e-4)
-    # train_parser.add_argument('--use_warmup', action='store_true')  # use LR warmup
     train_parser.add_argument('--lr_decay_factor', type=float, default=1.0)  # <= 1
     train_parser.add_argument('--lr_decay_every', type=int, default=100)  # how many rounds to decay lr
     train_parser.add_argument('--scheduler', type=str, default='const',
@@ -117,24 +112,27 @@ def make_finetune_parser():
     add_common_args(parser)
     add_model_args(parser)  # TODO: save args from pretrained model to load these from there
 
-    parser.add_argument('--train_mode', type=str, default='train', help='what to finetune')
+    parser.add_argument('--stateless_clients', action='store_true')  # if True, clients cannot maintain state
+    parser.add_argument('--personalize_on_client', type=str, required=True, help='what to finetune')
     parser.add_argument('--layers_to_finetune', type=int, nargs='*', default=None)
     parser.add_argument('--adapter_hidden_dim', type=int, default=16)
 
     parser.add_argument('--lr', type=float, default=3.5e-4)
-    parser.add_argument('--max_num_clients_for_personalization', type=int, default=100)
+    parser.add_argument('--max_num_clients_for_personalization', type=int, default=1500)
     parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'])
     parser.add_argument('--scheduler', type=str, default='const',
                         choices=['const', 'linear', 'expo', 'const_and_cut'])
     parser.add_argument('--warmup_fraction', type=float, default=0.1) # for linear schedule
     parser.add_argument('--lr_decay_factor', type=float, default=0.1) # final decay factor for exponential decay
     parser.add_argument('--lr_decay_every', type=int, default=100)  # how often to decay lr
-    parser.add_argument('--num_updates_personalization', type=int, default=100)
-    parser.add_argument('--num_epochs_personalization', type=int, default=2)
-    parser.add_argument('--use_epochs_for_personalization', action='store_true')
+    parser.add_argument('--num_epochs_personalization', type=int, default=1)
+    parser.add_argument('--client_var_l2_reg_coef', type=float, default=0.0)  # L2 regularization to add for personalization
+    parser.add_argument('--client_var_prox_to_init', action='store_true')  # if true, use initialization as prox center. Else, use zero
     return parser
 
 def add_common_args(parser):
+    parser.add_argument('--pretrained_model_path', type=str, default=None)  # if None, start from random init
+    parser.add_argument('--validation_mode', action='store_true')  # if true, split train set into train and val
     parser.add_argument('--data_dir', type=str, default='/checkpoint/pillutla/data')
     parser.add_argument('--dataset', type=str, required=True,
                         choices=['emnist', 'stackoverflow', 'gldv2'])
@@ -146,7 +144,7 @@ def add_common_args(parser):
     parser.add_argument('--savefilename', type=str, default='./saved_models/model.pt')  # save pretrained model
     parser.add_argument('--modelfilename', type=str, default='./saved_models/model.pt')  # to load pretrained model
     parser.add_argument('--logfilename', type=str, default='./logs/out')
-    parser.add_argument('--train_all_clients', action='store_true')
+    parser.add_argument('--train_all_clients', action='store_true')  # only for the stateless setting
     parser.add_argument('--max_num_clients_for_logging', type=int, default=2000)
     parser.add_argument('--train_batch_size', type=int, default=32)
     parser.add_argument('--eval_batch_size', type=int)  # if not specified use train_batch_size
@@ -234,16 +232,6 @@ def setup_centralized_optimizer_from_args(args, model, num_clients_to_process):
     scheduler = LambdaLR(optimizer, lr_lambda)
     return optimizer, scheduler
 
-def setup_centralized_optimizer_from_args_old(args, model, use_warmup=False):
-    lr = args.warmup_lr if use_warmup else args.lr
-    if args.central_optimizer == 'sgd':
-        optimizer = torch.optim.SGD(model.parameters(), lr=lr)
-    elif args.central_optimizer == 'adam':
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    else:
-        raise ValueError(f'Unknown optimizer: {args.central_optimizer}')
-    return optimizer
-
 def adjust_optimizer_centralized_(args, optimizer, epoch, num_clients_processed):
     if (args.use_warmup and 
         optimizer.param_groups[0]['lr'] == args.warmup_lr and
@@ -314,32 +302,3 @@ def setup_personalized_optimizer_from_args(args, model, num_training_steps):
     scheduler = LambdaLR(optimizer, lr_lambda)
 
     return optimizer, scheduler
-
-@torch.no_grad()
-def evaluate_model(model, data, batch_size, topk=(1, 3, 5, 10)):
-    criterion = torch.nn.CrossEntropyLoss()
-    model.eval()
-    device = next(model.parameters()).device
-    loss = 0.
-    correct = torch.zeros(len(topk), dtype=torch.long)
-    total = 0
-    loader = torch.utils.data.DataLoader(dataset=data, batch_size=batch_size, shuffle=False)
-    for i, (x,y) in enumerate(loader):
-        x, y = x.permute(1, 0).to(device), y.permute(1, 0).reshape(-1).to(device)
-        yhat = model(x).view(-1, model.vocab_size)  # (seq_len * batch_size, vocab_size)
-        loss += criterion(yhat, y).item()
-        # compute accuracies
-        mask = (1 - sum(y==i for i in data.non_vocab_idx)).bool()  # if False, exclude
-        correct += _get_topk_correct(y[mask], yhat[mask, :], topk)
-        total += mask.double().sum().item()
-    model.train()
-    loss = loss / len(loader)
-    accuracies = {f'accuracy_top{k}': correct[i].item()/total for i, k in enumerate(topk)}
-    return dict(loss=loss, ppl=math.exp(loss), **accuracies)
-
-def _get_topk_correct(y, scores, topk):
-    # y: (B,), yhat: (B, n_classes)
-    y_pred = scores.topk(k=max(topk), dim=1)[1].t()  # (B, K_max) -> (K_max, B)
-    y1 = y.view(1, -1).expand_as(y_pred)  # (K_max, B); each column is identical
-    correct = (y_pred == y1)  # (K_max, B); which predictions are correct
-    return torch.LongTensor([correct[:k].sum().item() for k in topk])

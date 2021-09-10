@@ -156,56 +156,11 @@ class ResNetGN(PFLBaseModel):
     def print_summary(self, train_batch_size):
         raise NotImplementedError
 
-    def load_pretrained_and_prepare(self, state_dict, train_mode, layers_to_finetune, **kwargs):
-        assert train_mode in ['train', 'finetune', 'finetune_res_layer', 
-                              'finetune_inp_layer', 'finetune_out_layer',
-                              'adapter'] 
-        # load state_dict 
-        self.load_state_dict(state_dict, strict=False)
-
-        # Prepare
-        if layers_to_finetune is None:  # do not fine tune
-            layers_to_finetune = []
-        if train_mode == 'finetune_res_layer' and len(layers_to_finetune) is None:
-            raise ValueError(f'No residual blocks to finetune. Nothing to do')
-        
-        # Set requires_grad based on `train_mode`
-        if train_mode in ['train', 'finetune']:  # all parameters are to be tuned
-            def do_finetune(name):
-                return True
-        elif 'finetune_res_layer' in train_mode:
-            # Finetune a specific residual block (available layers are [1, 2, 3, 4])
-            def do_finetune(name):
-                return any([f'layer{i}' in name for i in layers_to_finetune])
-        elif train_mode in ['finetune_inp_layer']:
-            # Fine tune positional and word embeddings
-            def do_finetune(name):
-                return (name in ['conv1.weight', 'bn1.weight', 'bn1.bias'])  # first conv + bn
-        elif train_mode in ['finetune_out_layer']:
-            # Fine tune final linear layer
-            def do_finetune(name):
-                return (name in ['fc.weight', 'fc.bias'])  # final fc
-        elif train_mode in ['adapter']:
-            # Train adapter modules (+ batch norm)
-            def do_finetune(name):
-                return ('adapter' in name) or ('bn1' in name) or ('bn2' in name)
-            # Add adapter modules
-            for layer in [self.layer1, self.layer2, self.layer3, self.layer4]:
-                for block in layer.children():
-                    # each block is of type `ResidualBlock`
-                    block.add_adapters()
-        else:
-            raise ValueError(f'Unknown train_mode: {train_mode}')
-
-        # set requires_grad for those parameters which need to be modified
-        for name, param in self.named_parameters():
-            param.requires_grad_(do_finetune(name))
-
     def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim=-1):
         device = next(self.parameters()).device
         if self.is_on_client is not None:
             raise ValueError('This model has already been split across clients and server.')
-        assert client_mode in ['none', 'res_layer', 'inp_layer', 'out_layer', 'adapter', 'interpolate'] 
+        assert client_mode in ['none', 'res_layer', 'inp_layer', 'out_layer', 'adapter', 'interpolate', 'finetune'] 
         # Prepare
         if layers_to_client is None:  # no layers to client
             layers_to_client = []
@@ -239,9 +194,12 @@ class ResNetGN(PFLBaseModel):
                 for block in layer.children():
                     # each block is of type `ResidualBlock`
                     block.add_adapters()
-        elif client_mode == 'interpolate':
+        elif client_mode == 'interpolate':  # both on client and server
             is_on_client = lambda _: True
             is_on_server = lambda _: True
+        elif client_mode == 'finetune':  # all on client
+            is_on_client = lambda _: True
+            is_on_server = lambda _: False
         else:
             raise ValueError(f'Unknown client_mode: {client_mode}')
         if is_on_server is None:

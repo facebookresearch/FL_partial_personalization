@@ -9,7 +9,7 @@
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=40G
 #SBATCH --gres=gpu:1
-#SBATCH --time=8:30:00
+#SBATCH --time=10:30:00
 #SBATCH --open-mode=append
 
 source ~/.bashrc  # load all modules

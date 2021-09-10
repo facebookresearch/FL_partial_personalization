@@ -9,7 +9,7 @@
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=40G
 #SBATCH --gres=gpu:1
-#SBATCH --time=4:30:00
+#SBATCH --time=6:30:00
 #SBATCH --open-mode=append
 
 source ~/.bashrc  # load all modules
@@ -28,7 +28,7 @@ arch_size="tiny"
 logdir="/checkpoint/pillutla/pfl/outputs3"
 savedir="/checkpoint/pillutla/pfl/saved_models3"
 common_args=" --dataset stackoverflow --train_batch_size 64 --eval_batch_size 1024 "
-common_args="${common_args} --num_communication_rounds 500 --num_clients_per_round 10 --num_local_epochs 1"
+common_args="${common_args} --num_communication_rounds 1000 --num_clients_per_round 10 --num_local_epochs 1"
 common_args="${common_args} --clip_grad_norm  --log_test_every_n_rounds 50 --max_num_clients_for_logging 1000 "  # TODO!
 common_args="${common_args} --arch_size ${arch_size} \
         --server_optimizer adam --server_lr 1e-3 --client_lr 1 --client_scheduler const \
