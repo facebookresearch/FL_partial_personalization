@@ -13,7 +13,7 @@ class PFLBaseModel(torch.nn.Module):
     def print_summary(self, train_batch_size):
         raise NotImplementedError
 
-    def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim):
+    def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim, dropout=0.):
         # NOTE: must set self.client_params_fn and self.server_params_fn
         raise NotImplementedError
 

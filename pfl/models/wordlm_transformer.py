@@ -76,17 +76,24 @@ class TransformerBlock(nn.Module):
         z = self.layernorm2(z)
         return z  # (seq_len, B, d)
 
-    def add_adapters(self, adapter_hidden_dim):
+    def add_adapters(self, adapter_hidden_dim, dropout=0.0):
         if not self.use_adapter:
             self.use_adapter = True
-            self.adapter1 = AdapterBlock(self.input_dim, adapter_hidden_dim)
-            self.adapter2 = AdapterBlock(self.input_dim, adapter_hidden_dim)
+            self.adapter1 = AdapterBlock(self.input_dim, adapter_hidden_dim, dropout)
+            self.adapter2 = AdapterBlock(self.input_dim, adapter_hidden_dim, dropout)
+
+    def add_dropout(self, dropout):
+        self.dropout_attn = nn.Dropout(dropout)
+        self.dropoutfc = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
 
 class AdapterBlock(nn.Module):
-    def __init__(self, input_dim, adapter_hidden_dim):
+    def __init__(self, input_dim, adapter_hidden_dim, dropout):
         super().__init__()
         self.linear1 = nn.Linear(input_dim, adapter_hidden_dim)
         self.linear2 = nn.Linear(adapter_hidden_dim, input_dim)
+        self.dropout = nn.Dropout(dropout)
         # initialize weights to a small constant
         for module in [self.linear1, self.linear2]:
             nn.init.normal_(module.weight, 0, .01)
@@ -94,7 +101,7 @@ class AdapterBlock(nn.Module):
 
     def forward(self, x): # x: (seq_len, B, d)
         # down-project
-        u = relu(self.linear1(x))  # (seq_len, B, h)
+        u = relu(self.linear1(self.dropout(x)))  # (seq_len, B, h)
         # up-project
         u = self.linear2(u)  # (seq_len, B, d)
         # skip connection
@@ -169,7 +176,7 @@ class WordLMTransformer(PFLBaseModel):
         print(summary(self, input_size=(self.seq_len, train_batch_size), 
                       dtypes=[torch.int64], device=device))
 
-    def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim):
+    def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim, dropout=0.0):
         """ Initialize adapter modules if necessary and split parameters into server_parameters and client_parameters.
         """
         device = next(self.parameters()).device
@@ -198,21 +205,25 @@ class WordLMTransformer(PFLBaseModel):
             # Send a specific transformer layer to client
             def is_on_client(name):
                 return any([f'transformer.{i}' in name for i in layers_to_client])
+            for i in layers_to_client:
+                self.transformer[i].add_dropout(dropout)
         elif client_mode in ['inp_layer']:
             # Send positional and word embeddings to clients
             def is_on_client(name):
                 return ('embedding' in name)
-        elif client_mode in ['finetune_out_layer']:
+            self.drop_i = nn.Dropout(dropout)
+        elif client_mode in ['out_layer']:
             # Send final linear layer to client
             def is_on_client(name):
                 return ('bias' == name) or ('decoder' in name)
+            self.drop_o = nn.Dropout(dropout)
         elif client_mode in ['adapter']:
             # Send adapter modules (+ normalization) to clients
             def is_on_client(name):
                 return ('adapter' in name) or ('layernorm' in name)
             # Add adapter modules
             for block in self.transformer:
-                block.add_adapters(adapter_hidden_dim)
+                block.add_adapters(adapter_hidden_dim, dropout)
         elif client_mode == 'interpolate':
             is_on_client = lambda _: True
             is_on_server = lambda _: True

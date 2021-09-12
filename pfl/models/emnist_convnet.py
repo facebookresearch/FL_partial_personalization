@@ -29,7 +29,7 @@ class EmnistConvNet(PFLBaseModel):
         device = next(self.parameters()).device
         print(summary(self, input_size=(train_batch_size, 1, 28, 28), device=device))
 
-    def split_server_and_client_params(self, client_mode, layers_to_client=[], adapter_hidden_dim=-1):
+    def split_server_and_client_params(self, client_mode, layers_to_client=[], adapter_hidden_dim=-1, dropout=0.):
         if self.is_on_client is not None:
             raise ValueError('This model has already been split.')
         assert client_mode in ['none', 'representation', 'out_layer', 'interpolate']

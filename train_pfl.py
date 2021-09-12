@@ -20,7 +20,10 @@ def main():
     pfl.utils.update_arch_params_from_arch_size(args)
     print('Args', '-'*50, '\n', args, '\n', '-'*50)
     torch.manual_seed(args.seed+5)
-    tf.random.set_seed(args.seed+10)  # for TFF dataloaders
+    if args.dataset == 'gldv2':
+        tf.random.set_seed(10) # for a consistent train-test split
+    else:
+        tf.random.set_seed(args.seed+10)  # for TFF dataloaders
     device = pfl.utils.get_device_from_arg(args.device)
     pfl.utils.tf_hide_other_gpus(args.device)
     print('Using device:', device)
@@ -37,8 +40,13 @@ def main():
         state_dict = loaded['model_state_dict'] if 'model_state_dict' in loaded else loaded['server_model_state_dict']
         server_model.load_state_dict(state_dict)
     server_model.print_summary(args.train_batch_size)
-    server_model.split_server_and_client_params(args.personalize_on_client, args.layers_to_finetune, args.adapter_hidden_dim)
+    server_model.split_server_and_client_params(
+        args.personalize_on_client, layers_to_client=args.layers_to_finetune,
+        adapter_hidden_dim=args.adapter_hidden_dim,
+        dropout=args.personalized_dropout
+    )
     print(f'Setup model in', timedelta(seconds=round(time.time() - start_time)))
+    print(server_model)
 
     # Setup dataloaders
     start_time = time.time()

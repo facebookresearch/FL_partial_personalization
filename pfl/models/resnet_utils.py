@@ -67,18 +67,19 @@ class ResidualBlock(nn.Module):
         out = self.relu(out)
         return out
 
-    def add_adapters(self):
+    def add_adapters(self, dropout=0.):
         if not self.use_adapter:
             self.use_adapter = True
-            self.adapter1 = AdapterBlock(self.planes)
-            self.adapter2 = AdapterBlock(self.planes)
+            self.adapter1 = AdapterBlock(self.planes, dropout)
+            self.adapter2 = AdapterBlock(self.planes, dropout)
 
 class AdapterBlock(nn.Module):
-    def __init__(self, planes):
+    def __init__(self, planes, dropout):
         super().__init__()
         # self.bn = nn.BatchNorm2d(planes)
         self.bn = create_group_norm(planes)
         self.conv = conv1x1(planes, planes)  # 1x1 convolution
+        self.dropout = nn.Dropout(dropout)
         # initialize
         nn.init.normal_(self.conv.weight, 0, 1e-4)
         # nn.init.constant_(self.conv.bias, 0.0)  # no bias
@@ -86,7 +87,7 @@ class AdapterBlock(nn.Module):
     def forward(self, x):
         identity = x
         out = self.bn(x)  # Batch norm
-        out = self.conv(out)  # 1x1 conv
+        out = self.conv(self.dropout(out))  # 1x1 conv
         out += identity  # skip connection
         return out
 
@@ -95,6 +96,8 @@ class ResNetGN(PFLBaseModel):
         # if original_size: expect (3, 224, 224) images, else expect (1, 28, 28)
         super().__init__()
         self.inplanes = 64
+        self.drop_i = nn.Dropout(0.)
+        self.drop_o = nn.Dropout(0.)
         if original_size:
             self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
         else:
@@ -137,7 +140,7 @@ class ResNetGN(PFLBaseModel):
         return nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv1(x)
+        x = self.conv1(self.drop_i(x))
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
@@ -149,14 +152,14 @@ class ResNetGN(PFLBaseModel):
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
-        x = self.fc(x)
+        x = self.fc(self.drop_o(x))
 
         return x 
 
     def print_summary(self, train_batch_size):
         raise NotImplementedError
 
-    def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim=-1):
+    def split_server_and_client_params(self, client_mode, layers_to_client, adapter_hidden_dim=-1, dropout=0.):
         device = next(self.parameters()).device
         if self.is_on_client is not None:
             raise ValueError('This model has already been split across clients and server.')
@@ -181,10 +184,12 @@ class ResNetGN(PFLBaseModel):
             # First convolutional layer is sent to client
             def is_on_client(name):
                 return (name in ['conv1.weight', 'bn1.weight', 'bn1.bias'])  # first conv + bn
+            self.drop_i = nn.Dropout(dropout)
         elif client_mode in ['out_layer']:
             # Final linear layer is sent to client
             def is_on_client(name):
                 return (name in ['fc.weight', 'fc.bias'])  # final fc
+            self.drop_o = nn.Dropout(dropout)
         elif client_mode in ['adapter']:
             # Train adapter modules (+ batch norm)
             def is_on_client(name):
@@ -193,7 +198,7 @@ class ResNetGN(PFLBaseModel):
             for layer in [self.layer1, self.layer2, self.layer3, self.layer4]:
                 for block in layer.children():
                     # each block is of type `ResidualBlock`
-                    block.add_adapters()
+                    block.add_adapters(dropout)
         elif client_mode == 'interpolate':  # both on client and server
             is_on_client = lambda _: True
             is_on_server = lambda _: True

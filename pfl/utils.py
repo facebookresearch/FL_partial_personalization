@@ -54,6 +54,7 @@ def make_pfl_train_parser():
     pfl_parser.add_argument('--personalize_on_client', type=str, default='none')  # how to split/share the model on the client
     pfl_parser.add_argument('--layers_to_finetune', type=int, nargs='*', default=None)
     pfl_parser.add_argument('--adapter_hidden_dim', type=int, default=16)
+    pfl_parser.add_argument('--personalized_dropout', type=float, default=0.)
     pfl_parser.add_argument('--save_client_params_to_disk', action='store_true')
     pfl_parser.add_argument('--client_var_l2_reg_coef', type=float, default=0.0)
     pfl_parser.add_argument('--client_var_prox_to_init', action='store_true')  # if true, use initialization as prox center. Else, use zero
@@ -116,6 +117,7 @@ def make_finetune_parser():
     parser.add_argument('--personalize_on_client', type=str, required=True, help='what to finetune')
     parser.add_argument('--layers_to_finetune', type=int, nargs='*', default=None)
     parser.add_argument('--adapter_hidden_dim', type=int, default=16)
+    parser.add_argument('--personalized_dropout', type=float, default=0.)
 
     parser.add_argument('--lr', type=float, default=3.5e-4)
     parser.add_argument('--max_num_clients_for_personalization', type=int, default=1500)

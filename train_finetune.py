@@ -21,6 +21,10 @@ def main():
     pfl.utils.update_arch_params_from_arch_size(args)
     print('Args', '-'*50, '\n', args, '\n', '-'*50)
     torch.manual_seed(args.seed+25)
+    if args.dataset == 'gldv2': # For TFF dataloaders
+        tf.random.set_seed(10) # for a consistent train-test split
+    else:
+        tf.random.set_seed(args.seed+10)
     device = pfl.utils.get_device_from_arg(args.device)
     pfl.utils.tf_hide_other_gpus(args.device)
     print('Using device:', device)
@@ -37,6 +41,7 @@ def main():
     model.split_server_and_client_params(
         args.personalize_on_client, layers_to_client=args.layers_to_finetune,
         adapter_hidden_dim=args.adapter_hidden_dim,
+        dropout=args.personalized_dropout
     )
     saved_client_params = loaded['client_params'] if 'client_params' in loaded else {}
     model.print_summary(args.train_batch_size)
