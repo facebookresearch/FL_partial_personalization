@@ -194,7 +194,7 @@ def rename_one_item(name):
         raise ValueError("Unknown name:", name)
 
 def get_main_pertask_table(
-    ds_and_model, init, state, seed=1, ne_finetune=5, ne_pfl=1,
+    ds_and_model, init, state, seeds=list(range(1,6)), ne_finetune=5, ne_pfl=1,
     use_unweighted_stats=False, finetune_pfl_joint=False, metric="accuracy",
 ):
     suffix = "_u" if use_unweighted_stats else ""
@@ -204,29 +204,30 @@ def get_main_pertask_table(
 
     columns = pd.MultiIndex.from_product([metric_lst, pfl_algo_lst])
     index = ["pretrained"] + name_lst
-    df_out = pd.DataFrame(columns=columns, index=index)
+    df_out_lst = [pd.DataFrame(columns=columns, index=index) for seed in seeds]
 
-    fn = get_fedavg_finetune_fn(ds_and_model, "finetune", seed=seed, num_epochs_finetune=ne_finetune)
-    df1 = pd.read_csv(fn, index_col=0)
-    for c in columns:
-        df_out.at["pretrained", c] = df1.at["pretrained", c[0]]
+    for i, seed in enumerate(seeds):
+        df_out = df_out_lst[i]
+        fn = get_fedavg_finetune_fn(ds_and_model, "finetune", seed=seed, num_epochs_finetune=ne_finetune)
+        df1 = pd.read_csv(fn, index_col=0)
+        for c in columns:
+            df_out.at["pretrained", c] = df1.at["pretrained", c[0]]
 
-    for pfl_algo in pfl_algo_lst:
-        ne = ne_finetune if pfl_algo == 'finetune' else ne_pfl
-        if pfl_algo == "pfl_joint" and not finetune_pfl_joint:
-            row = "pretrained"
-        else:
-            row = "finetuned"
-        for train_mode in name_lst:
-            fn = get_pfl_finetune_fn(ds_and_model, train_mode, pfl_algo, init, state, seed=seed, num_epochs_finetune=ne)
-            df2 = pd.read_csv(fn, index_col=0)
-            for metric in metric_lst:
-                df_out.at[train_mode, (metric, pfl_algo)] = df2.at[row, metric]
-
-    return df_out
+        for pfl_algo in pfl_algo_lst:
+            ne = ne_finetune if pfl_algo == 'finetune' else ne_pfl
+            if pfl_algo == "pfl_joint" and not finetune_pfl_joint:
+                row = "pretrained"
+            else:
+                row = "finetuned"
+            for train_mode in name_lst:
+                fn = get_pfl_finetune_fn(ds_and_model, train_mode, pfl_algo, init, state, seed=seed, num_epochs_finetune=ne)
+                df2 = pd.read_csv(fn, index_col=0)
+                for metric in metric_lst:
+                    df_out.at[train_mode, (metric, pfl_algo)] = df2.at[row, metric]
+    return get_mean_std_df(df_out_lst)
         
 def get_main_pertask_table_mean(
-    ds_and_model, init, state, seed=1, ne_finetune=5, ne_pfl=1,
+    ds_and_model, init, state, seeds=list(range(1, 6)), ne_finetune=5, ne_pfl=1,
     use_unweighted_stats=False, finetune_pfl_joint=False
 ):
     suffix = "_u" if use_unweighted_stats else ""
@@ -236,24 +237,26 @@ def get_main_pertask_table_mean(
 
     columns = pfl_algo_lst
     index = ["pretrained"] + name_lst
-    df_out = pd.DataFrame(columns=columns, index=index)
+    df_out_lst = [pd.DataFrame(columns=columns, index=index) for seed in seeds]
 
-    fn = get_fedavg_finetune_fn(ds_and_model, "finetune", seed=seed, num_epochs_finetune=ne_finetune)
-    df1 = pd.read_csv(fn, index_col=0)
-    for c in columns:
-        df_out.at["pretrained", c] = df1.at["pretrained", metric]
+    for i, seed in enumerate(seeds):
+        df_out = df_out_lst[i]
+        fn = get_fedavg_finetune_fn(ds_and_model, "finetune", seed=seed, num_epochs_finetune=ne_finetune)
+        df1 = pd.read_csv(fn, index_col=0)
+        for c in columns:
+            df_out.at["pretrained", c] = df1.at["pretrained", metric]
 
-    for pfl_algo in pfl_algo_lst:
-        ne = ne_finetune if pfl_algo == 'finetune' else ne_pfl
-        if pfl_algo == "pfl_joint" and not finetune_pfl_joint:
-            row = "pretrained"
-        else:
-            row = "finetuned"
-        for train_mode in name_lst:
-            fn = get_pfl_finetune_fn(ds_and_model, train_mode, pfl_algo, init, state, seed=seed, num_epochs_finetune=ne)
-            df2 = pd.read_csv(fn, index_col=0)
-            df_out.at[train_mode, pfl_algo] = df2.at[row, metric]
-    return df_out
+        for pfl_algo in pfl_algo_lst:
+            ne = ne_finetune if pfl_algo == 'finetune' else ne_pfl
+            if pfl_algo == "pfl_joint" and not finetune_pfl_joint:
+                row = "pretrained"
+            else:
+                row = "finetuned"
+            for train_mode in name_lst:
+                fn = get_pfl_finetune_fn(ds_and_model, train_mode, pfl_algo, init, state, seed=seed, num_epochs_finetune=ne)
+                df2 = pd.read_csv(fn, index_col=0)
+                df_out.at[train_mode, pfl_algo] = df2.at[row, metric]
+    return get_mean_std_df(df_out_lst)
 
 def rename_main_table_per_task(df):
     df = df.rename(index={name: rename_one_item(name) for name in df.index})
@@ -292,7 +295,7 @@ def rename_final_finetune_table_per_task(df):
 ########### Utility functions
 #########################################
 def convert_to_string_and_bold(
-        df, do_bold=True, best_is_min = False,
+        df, dfs=None, print_std=True, do_bold=True, best_is_min = False,
         rows_to_skip = ["pretrained", "Non-personalized"]
 ):
     # TODO: take a per-outer_col max_or_min arg
@@ -312,12 +315,13 @@ def convert_to_string_and_bold(
         for col in outer_cols:
             for c in inner_cols:
                 value = df.at[row, (col, c)]
+                std = dfs.at[row, (col, c)] if dfs is not None else 0
+                std_str = "_{{{:.2f}}}".format(std*100) if std > 1e-4 else ""
                 if do_bold and value == df_max.at[row, col] and row not in rows_to_skip:
-                    cast_val = r'$\mathbf{{{:.2f}}}$'.format(value*100)
+                    cast_val = r'$\mathbf{{{:.2f}}}{}$'.format(value*100, std_str)
                 else:
-                    cast_val = r'${:.2f}$'.format(value*100)
+                    cast_val = r'${:.2f}{}$'.format(value*100, std_str)
                 df2.at[row, (col, c)] = cast_val
-
     return df2
 
 #######################################
