@@ -119,7 +119,7 @@ def finetune_for_one_client(
     model.client_params_requires_grad_(True)
     model.server_params_requires_grad_(False)
     # Init other parameters
-    max_num_updates = len(trainloader) * args.num_epochs_personalization 
+    max_num_updates = min(len(trainloader) * args.num_epochs_personalization, args.max_num_finetune_updates)
     optimizer, scheduler = pfl.utils.setup_personalized_optimizer_from_args(args, model, max_num_updates)
 
     # log

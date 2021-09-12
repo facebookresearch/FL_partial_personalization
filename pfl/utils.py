@@ -128,6 +128,7 @@ def make_finetune_parser():
     parser.add_argument('--lr_decay_factor', type=float, default=0.1) # final decay factor for exponential decay
     parser.add_argument('--lr_decay_every', type=int, default=100)  # how often to decay lr
     parser.add_argument('--num_epochs_personalization', type=int, default=1)
+    parser.add_argument('--max_num_finetune_updates', type=int, default=10000)  # use this or num_epochs, whichever is smaller
     parser.add_argument('--client_var_l2_reg_coef', type=float, default=0.0)  # L2 regularization to add for personalization
     parser.add_argument('--client_var_prox_to_init', action='store_true')  # if true, use initialization as prox center. Else, use zero
     return parser

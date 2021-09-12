@@ -46,7 +46,6 @@ def main():
         dropout=args.personalized_dropout
     )
     print(f'Setup model in', timedelta(seconds=round(time.time() - start_time)))
-    print(server_model)
 
     # Setup dataloaders
     start_time = time.time()
