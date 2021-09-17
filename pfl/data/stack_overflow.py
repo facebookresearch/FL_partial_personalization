@@ -173,6 +173,7 @@ def so_loss_of_batch_fn(y_pred, y_true):
 @torch.no_grad()
 def so_metrics_of_batch_fn(y_pred, y_true, non_vocab_idx, topk=(1, 3, 5, 10)):
     # y_pred: (seq_len, batch_size, vocab_size); # y_true: (seq_len, batch_size)
+    original_shapes = (y_true.shape, y_pred.shape)
     y_pred = y_pred.view(-1, y_pred.shape[-1])  # (seq_len * batch_size, vocab_size)
     y_true = y_true.view(-1)  # (seq_len * batch_size,)
     # unmasked metrics
@@ -186,11 +187,18 @@ def so_metrics_of_batch_fn(y_pred, y_true, non_vocab_idx, topk=(1, 3, 5, 10)):
     metrics['loss_in_vocab'] = torch.nn.functional.cross_entropy(y_pred, y_true).item()
     # accuracy
     argmax = torch.argmax(y_pred, axis=1)
-    metrics['accuracy'] = (argmax == y_true).sum().item() * 1.0 / num_pred
-    # top-k accuracy
-    correct_at_k = _get_topk_correct(y_true, y_pred, topk)
-    for i, k in enumerate(topk):
-        metrics[f'accuracy_top{k}'] = correct_at_k[i] / num_pred
+    if num_pred > 0:
+        metrics['accuracy'] = (argmax == y_true).sum().item() * 1.0 / num_pred
+        # top-k accuracy
+        correct_at_k = _get_topk_correct(y_true, y_pred, topk)
+        for i, k in enumerate(topk):
+            metrics[f'accuracy_top{k}'] = correct_at_k[i] / num_pred
+    else:  # no in-vocab tokens (a rare possibility)
+        print(f'Found no in-vocab tokens. y_true.shape = {original_shapes[0]}.',
+              f'y_pred.shape = {original_shapes[1]}. ')
+        metrics['accuracy'] = 0
+        for k in topk:
+            metrics[f'accuracy_top{k}'] = 0
     return num_pred, metrics
 
 

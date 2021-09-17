@@ -65,12 +65,16 @@ def main():
     list_of_clients_to_finetune = rng_clients.sample(test_fed_loader.available_clients, k=num_clients)
     print(f'Finetuning for {num_clients} clients')
 
-    per_client_train_sizes = []
-    per_client_train_metrics = []
-    per_client_test_sizes = []
-    per_client_test_metrics = []
+    per_client_train_sizes = [None] * len(list_of_clients_to_finetune)
+    per_client_train_metrics = [None] * len(list_of_clients_to_finetune)
+    per_client_test_sizes = [None] * len(list_of_clients_to_finetune)
+    per_client_test_metrics = [None] * len(list_of_clients_to_finetune)
+    
+    rng2 = random.Random(args.seed + 5)
+    lst_count_clients = list(enumerate(list_of_clients_to_finetune))
+    rng2.shuffle(lst_count_clients)
 
-    for i, client_id in enumerate(list_of_clients_to_finetune):
+    for cnt, (i, client_id) in enumerate(lst_count_clients):
         gc.collect()
         print(f'\n\n-------\nStarting client {i}/{num_clients}: {client_id} \n--------')
         start_time = time.time()
@@ -80,12 +84,12 @@ def main():
         out = finetune_for_one_client(
             args, model, client_params, client_trainloader, client_testloader, loss_fn, metrics_fn, device
         )
-        per_client_train_sizes.append(out[0])
-        per_client_train_metrics.append(out[1])
-        per_client_test_sizes.append(out[2])
-        per_client_test_metrics.append(out[3])
+        per_client_train_sizes[i] = out[0]
+        per_client_train_metrics[i] = out[1]
+        per_client_test_sizes[i] = out[2]
+        per_client_test_metrics[i] = out[3]
         print(
-            f'\nProcessed client {i}/{num_clients} in', timedelta(seconds=round(time.time() - start_time)),
+            f'\nProcessed client {cnt}/{num_clients} (unshuffled id: {i}) in', timedelta(seconds=round(time.time() - start_time)),
             'total time:', timedelta(seconds=round(time.time() - global_start_time)),
         )
 
