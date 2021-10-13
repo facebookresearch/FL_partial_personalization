@@ -1,4 +1,4 @@
-
+from collections.abc import Sequence
 import math
 import numpy as np
 import pandas as pd
@@ -9,6 +9,8 @@ from collections import OrderedDict
 from scipy.stats import spearmanr, pearsonr
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+import matplotlib.cm as cm
 import seaborn as sns
 COLORS = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
@@ -23,14 +25,17 @@ mpl.rcParams['axes.titlesize'] = 18
 #########################################
 ########### Global variables
 #######################################
+# pfl_name = r"$\partial$PFL"
+pfl_name = "Partial"
+
 pfl_algo_rename_dict = dict(
     ft = "Finetune",
     finetune = "Finetune",
     pfl_fl = "Finetune",
-    pfl_am = "PFL-AM",
-    pfl_su = "PFL-SU",
-    pfl_alternating = "PFL-AM",
-    pfl_joint = "PFL-SU"
+    pfl_am = "FedAlt",
+    pfl_su = "FedSim",
+    pfl_alternating = 'FedAlt',
+    pfl_joint = 'FedSim'
 )
 
 dataset_rename_dict = dict(
@@ -46,7 +51,7 @@ dataset_rename_dict_short = dict(
     emnist_resnetgn= "EMNIST",
     # gldv2_resnetgn="GLDv2",
     gldv2b_resnetgn="GLDv2",
-    gldv2c_resnetgn="GLDv2c",
+    # gldv2c_resnetgn="GLDv2c",
     so_mini="StackOverflow",
     so_tiny="StackOverflow (tiny)"
 )
@@ -76,6 +81,8 @@ for k in [1, 3, 5, 10]:
 
 zero_params = dict(color='black', linestyle='dotted')
 mean_params = dict(color=COLORS[1], linestyle='dashed')
+zero_params_hist = dict(color='black', linestyle='dotted', linewidth=1)
+mean_params_hist = dict(color=COLORS[6], linestyle='dashed', linewidth=2)
 
 
 from socket import gethostname
@@ -84,6 +91,8 @@ if 'devfair' in gethostname():
 elif 'pillutla-mbp' in gethostname():
     MAIN_DIR = '/Users/pillutla/Dropbox (Facebook)/code/pfl_outputs'
 elif 'zh-' in gethostname():
+    MAIN_DIR = '/mnt/hdd/pillutla/fair'
+elif gethostname() == 'kakade-workstation':
     MAIN_DIR = '/home/pillutla/fl/pfl_outputs'
 else:  # personal laptop
     MAIN_DIR = None
@@ -315,15 +324,16 @@ def get_main_pertask_table_mean_states(
     name_lst = get_name_list(ds_and_model)
 
     columns = pd.MultiIndex.from_product([state_lst, pfl_algo_lst])
-    index = ["pretrained"] + name_lst
-    df_out_lst = [pd.DataFrame(columns=columns, index=index) for seed in seeds]
+    # index = ["pretrained"] + name_lst
+    index = name_lst
+    df_out_lst = [pd.DataFrame(columns=columns, index=index) for _ in seeds]
 
     for i, seed in enumerate(seeds):
         df_out = df_out_lst[i]
-        fn = get_fedavg_finetune_fn(ds_and_model, "finetune", seed=seed, num_epochs_finetune=ne_finetune)
-        df1 = pd.read_csv(fn, index_col=0)
-        for c in columns:
-            df_out.at["pretrained", c] = df1.at["pretrained", metric]
+        # fn = get_fedavg_finetune_fn(ds_and_model, "finetune", seed=seed, num_epochs_finetune=ne_finetune)
+        # df1 = pd.read_csv(fn, index_col=0)
+        # for c in columns:
+        #     df_out.at["pretrained", c] = df1.at["pretrained", metric]
 
         for pfl_algo in pfl_algo_lst:
             ne = ne_finetune if pfl_algo == 'finetune' else ne_pfl
@@ -336,6 +346,41 @@ def get_main_pertask_table_mean_states(
                     fn = get_pfl_finetune_fn(ds_and_model, train_mode, pfl_algo, init, state, seed=seed, num_epochs_finetune=ne)
                     df2 = pd.read_csv(fn, index_col=0)
                     df_out.at[train_mode, (state, pfl_algo)] = df2.at[row, metric]
+    return get_mean_std_df(df_out_lst)
+
+def get_main_combinedtask_table_mean(
+    init="pretrained", state="stateful", seeds=list(range(1,6)), ne_finetune=5, ne_pfl=5, 
+    use_unweighted_stats=False, finetune_pfl_joint=True, metric_name="accuracy", use_emnist=False
+):
+    suffix = "_u" if use_unweighted_stats else ""
+    metric = f"{metric_name}|mean{suffix}"
+    ds_and_model_lst = ['so_mini', 'gldv2b_resnetgn']
+    if use_emnist:
+        ds_and_model_lst += ['emnist_resnetgn']
+    pfl_algo_lst = ["finetune", "pfl_alternating", "pfl_joint"]
+    name_lsts = [get_name_list(ds_and_model)[:3] for ds_and_model in ds_and_model_lst]
+    name_rename_dict = OrderedDict([
+        ('inp_layer', 'Input Layer'), ('tr_layer_0', 'Input Layer'),
+        ('out_layer', 'Output Layer'), ('tr_layer_3', 'Output Layer'),
+        ('adapter', 'Adapter'), ('adapter_16', 'Adapter'), ('adapter_64', 'Adapter')
+    ])
+    index = [name_rename_dict[n] for n in name_lsts[1]]  # for GLDv2
+    columns = pd.MultiIndex.from_product([ds_and_model_lst, pfl_algo_lst])
+    df_out_lst = [pd.DataFrame(columns=columns, index=index) for _ in seeds]
+
+    for i, seed in enumerate(seeds):
+        df_out = df_out_lst[i]
+        for pfl_algo in pfl_algo_lst:
+            ne = ne_finetune if pfl_algo == 'finetune' else ne_pfl
+            if pfl_algo == "pfl_joint" and not finetune_pfl_joint:
+                row = "pretrained"
+            else:
+                row = "finetuned"
+            for j, ds_and_model in enumerate(ds_and_model_lst):
+                for train_mode in name_lsts[j]:
+                    fn = get_pfl_finetune_fn(ds_and_model, train_mode, pfl_algo, init, state, seed=seed, num_epochs_finetune=ne)
+                    df2 = pd.read_csv(fn, index_col=0)
+                    df_out.at[name_rename_dict[train_mode], (ds_and_model, pfl_algo)] = df2.at[row, metric]
     return get_mean_std_df(df_out_lst)
 
 def get_main_pertask_table_mean(
@@ -370,10 +415,13 @@ def get_main_pertask_table_mean(
                 df_out.at[train_mode, pfl_algo] = df2.at[row, metric]
     return get_mean_std_df(df_out_lst)
 
-def rename_multilevel_table(df):
-    df = df.rename(index={name: rename_one_item(name) for name in df.index})
+def rename_multilevel_table(df, rename_index=True):
+    if rename_index:
+        df = df.rename(index={name: rename_one_item(name) for name in df.index})
+    else:
+        df = df.copy()
     df.rename(columns=metric_rename_dict, level=0, inplace=True)  # If top level is a metric
-    df.rename(columns=dataset_rename_dict, level=0, inplace=True)  # If top level is a dataset
+    df.rename(columns=dataset_rename_dict_short, level=0, inplace=True)  # If top level is a dataset
     df.rename(columns={'stateless':'Stateless', 'stateful': 'Stateful'},  # If top level is state
               level=0, inplace=True)  # If top level is stateful/stateless
     df.rename(columns=pfl_algo_rename_dict, level=1, inplace=True)  # Lower level is always PFL algo
@@ -405,7 +453,7 @@ def get_final_finetune_pertask_table(
     return get_mean_std_df(df_out_lst)
 
 def rename_final_finetune_table_per_task(df):
-    df = df.rename(columns=dataset_rename_dict, level=0)
+    df = df.rename(columns=dataset_rename_dict_short, level=0)
     df.rename(columns=pfl_algo_rename_dict, level=1, inplace=True)
     return df
 
@@ -432,7 +480,7 @@ def get_main_combined_table(
             # FedAvg
             fn = get_fedavg_finetune_fn(ds_and_model, "finetune", seed=seed, num_epochs_finetune=ne_finetune)
             df1 = pd.read_csv(fn, index_col=0)
-            col[("Non-personalized", "")] = df1.at["pretrained", metric]
+            col[("Non-personalized", " ")] = df1.at["pretrained", metric]
             col[("Full Model", "Finetune")] = df1.at["finetuned", metric]
             # Ditto
             fn = get_ditto_finetune_fn(ds_and_model, seed=seed, num_epochs_finetune=ne_finetune)
@@ -447,7 +495,7 @@ def get_main_combined_table(
                 fn = get_pfl_finetune_fn(ds_and_model, train_mode, pfl_algo, init, state, seed=seed, num_epochs_finetune=ne_pfl)
                 df1 = pd.read_csv(fn, index_col=0)
                 tm = "adapter" if "adapter_" in train_mode else train_mode
-                col[("PFL", rename_one_item(tm))] = df1.at["finetuned", metric]
+                col[(pfl_name, rename_one_item(tm))] = df1.at["finetuned", metric]
             col_lst.append(col)
         df =  pd.DataFrame(col_lst).T  # seeds as columns, expected index as index
         df_mean[dataset_rename_dict_short[ds_and_model]] = df.mean(axis=1)
@@ -519,91 +567,186 @@ def convert_to_string_and_bold_maxpercol(
 #######################################
 ### Scatter plots: per-user statistics
 #######################################
+
+def _scatter_plot_helper_1(
+    f, ax, outs, train_metrics_fedavg, test_metrics_fedavg, 
+    clean_name_lst, metric_name, train_or_test, x_train_or_test, min_is_best, style,
+    hist2d, xlim, ylim, gridsize, annotate=True
+):
+    n_plots = ax.shape[0]
+    color_rgb = mpl.colors.colorConverter.to_rgb(COLORS[0])
+    colors = [sns.utils.set_hls_values(color_rgb, l=l)  # noqa
+            for l in np.linspace(0.99, 0, 12)]
+    cmap = sns.blend_palette(colors, as_cmap=True)
+    # cmap = 'Pastel1'
+    normalizer = None
+    lst = []
+    for r in range(2):
+        for i in range(n_plots):
+            train_sizes, train_metrics, test_sizes, test_metrics = outs[i]
+            # change in loss/accuracy
+            if train_or_test == 'train':
+                test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(train_metrics, train_metrics_fedavg)])
+            else:
+                test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(test_metrics, test_metrics_fedavg)])
+            if min_is_best:
+                test_deltas = -test_deltas
+            if 'accuracy' in metric_name:
+                test_deltas *= 100
+            mean = np.average(test_deltas, weights=test_sizes)
+            xs = np.asarray(train_sizes) if x_train_or_test.lower() == 'train' else np.asarray(test_sizes)
+            if r == 0:
+                print(f'i = {i}\tmean={mean:.4f}\tgt0={(test_deltas>0).sum()}\tlt0={(test_deltas<0).sum()}\teq0={(test_deltas==0).sum()}')
+            if hist2d:
+                ax[i].axhline(y=mean, alpha=0.6, **mean_params_hist, label='mean' if r==0 else None)
+                ax[i].axhline(y=0, alpha=0.4, **zero_params_hist)
+                idxs1 = (xs != -1e12) if xlim is None else np.logical_and(xlim[0] <= xs, xs <= xlim[1])
+                idxs2 = (xs != -1e12) if ylim is None else np.logical_and(ylim[0] <= test_deltas, test_deltas <= ylim[1])
+                idxs = np.logical_and(idxs1, idxs2)  # all the points within the given limits
+                out = ax[i].hexbin(
+                    xs[idxs], test_deltas[idxs], gridsize=gridsize[i] if isinstance(gridsize, Sequence) else gridsize, 
+                    cmap=cmap, norm=normalizer
+                )
+                lst.extend(out.get_array().tolist())
+            else:
+                ax[i].axhline(y=mean, alpha=0.5, **mean_params, label='mean' if r==0 and annotate else None)
+                ax[i].axhline(y=0, alpha=0.5, **zero_params)
+                ax[i].scatter(xs, test_deltas, alpha=0.1, **style)
+            # ax[i].set_xlabel(f"# Data per client ({x_train_or_test})")
+            ax[i].set_xlabel(f"# Data per device")
+            if i==0 and annotate: ax[i].set_ylabel(r"$\Delta$ " + metric_short_rename_dict[metric_name])
+            ax[i].set_title(clean_name_lst[i])
+            if ylim is not None:
+                ax[i].set_ylim(ylim)
+            if xlim is not None:
+                ax[i].set_xlim(xlim)
+        if hist2d: # set norm
+            normalizer=Normalize(min(lst), max(lst))
+            im=cm.ScalarMappable(norm=normalizer, cmap=cmap)
+        else:  # no need to repeat twice for a scatter plot
+            break 
+    if annotate: ax[-1].legend(fontsize=15)
+    plt.tight_layout()
+    if annotate:
+        ylim = ax[0].get_ylim()
+        xlim = ax[0].get_xlim()
+        _y = (ylim[1] - ylim[0]) * 0.01
+        _x = 0.2 * xlim[0] + 0.8 * xlim[1]
+        ax[0].annotate("Pers. helps", xy=(_x, _y),  xytext=(_x, 0.8 * ylim[1]), 
+            xycoords='data', textcoords='data',
+            bbox=dict(boxstyle="round", fc="none", ec="gray"), fontsize=12,
+            ha='center', arrowprops=dict(arrowstyle="<|-"))
+        ax[0].annotate("Pers. hurts", xy=(_x, -_y),  xytext=(_x, 0.8 * ylim[0]), 
+            xycoords='data', textcoords='data',
+            bbox=dict(boxstyle="round", fc="none", ec="gray"), fontsize=12,
+            ha='center', arrowprops=dict(arrowstyle="<|-"))
+    if hist2d:
+        cb = f.colorbar(im, ax=ax.ravel().tolist())
+        extra_artists = (cb,)
+    else:
+        extra_artists = ()
+    print('-'*50)
+    return extra_artists
+            
+
+
 def per_user_stats_scatter_plot(ds_and_model, pfl_algo="pfl_alternating", 
         args={}, metric_name='accuracy', min_is_best=False, x_train_or_test='train', train_or_test='test',
+        hist2d=False, xlim=None, ylim=None, gridsize=25
 ):
     style = {'color': COLORS[0], 'marker': 'o', 's':100, 'linestyle':"dashed"}
-    name_lst = get_name_list(ds_and_model)
+    name_lst = get_name_list(ds_and_model)[:3]
     n_plots = len(name_lst)
-    f, ax = plt.subplots(1, n_plots, figsize=(4*n_plots, 4), sharey=True)
-    suptitle = f.suptitle(dataset_rename_dict[ds_and_model], fontsize=18)
-    for i in range(n_plots):
-        out = load_pkl(get_pfl_finetune_all_fn(
+    f, ax = plt.subplots(1, n_plots, figsize=(5*n_plots, 4), sharey=True)
+    # suptitle = f.suptitle(dataset_rename_dict_short[ds_and_model], fontsize=18)
+    outs = [
+        load_pkl(get_pfl_finetune_all_fn(
             ds_and_model, name_lst[i], pfl_algo, **args
         ))
-        train_sizes, train_metrics, test_sizes, test_metrics = out
-        out2 = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune")) # load the metrics only
-        test_metrics_fedavg = out2[-1]
-        train_metrics_fedavg = out2[1]
-        # change in accuracy
-        if train_or_test == 'train':
-            test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(train_metrics, train_metrics_fedavg)])
-        else:
-            test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(test_metrics, test_metrics_fedavg)])
-        if min_is_best:
-            test_deltas = -test_deltas
-        if 'accuracy' in metric_name:
-            test_deltas *= 100
-        mean = np.average(test_deltas, weights=test_sizes)
-        xs = train_sizes if x_train_or_test.lower() == 'train' else test_sizes
-        ax[i].scatter(xs, test_deltas, alpha=0.1, **style)
-        ax[i].set_xlabel(f"# Data per client ({x_train_or_test})")
-        if i==0: ax[i].set_ylabel(r"$\Delta$ " + metric_short_rename_dict[metric_name])
-        ax[i].set_title(rename_one_item(name_lst[i]))
-        ax[i].axhline(y=mean, alpha=0.5, **mean_params)
-        ax[i].axhline(y=0, alpha=0.8, **zero_params)
-
-    plt.tight_layout()
-    extra_artists = (suptitle,)
+        for i in range(n_plots)
+    ]
+    out2 = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune")) # load the metrics only
+    test_metrics_fedavg = out2[-1]
+    train_metrics_fedavg = out2[1]
+    clean_name_lst = [rename_one_item(name) for name in name_lst]
+    extra_artists = _scatter_plot_helper_1(
+        f, ax, outs, train_metrics_fedavg, test_metrics_fedavg, 
+        clean_name_lst, metric_name, train_or_test, x_train_or_test, min_is_best, style, 
+        hist2d, xlim, ylim, gridsize
+    )
+    # extra_artists = (suptitle, *extra_artists)
     return f, extra_artists
 
 def per_user_stats_scatter_plot_full_v_partial(ds_and_model, pfl_algo="pfl_alternating", 
         args={}, metric_name='accuracy', min_is_best=False, x_train_or_test='train', train_or_test='test',
-        ne_finetune=5
+        ne_finetune=5, hist2d=False, xlim=None, ylim=None, gridsize=25
 ):
     style = {'color': COLORS[0], 'marker': 'o', 's':100, 'linestyle':"dashed"}
     n_plots = 4
-    f, ax = plt.subplots(1, n_plots, figsize=(4*n_plots, 4), sharey=True)
-    suptitle = f.suptitle(dataset_rename_dict[ds_and_model], fontsize=18)
+    f, ax = plt.subplots(1, n_plots, figsize=(4.5*n_plots, 4), sharey=True)
+    # suptitle = f.suptitle(dataset_rename_dict_short[ds_and_model], fontsize=18)
 
     # Gather filenames
     name_lst = get_name_list(ds_and_model) # PFL names
-    pfl_model_name = "adapter" if "adapter" in name_lst else "adapter_16"
+    pfl_model_name = "adapter" if "adapter" in name_lst else "tr_layer_3"
     outs = [
         load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune", num_epochs_finetune=ne_finetune)),  # FedAvg + Full finetune
         load_pkl(get_ditto_finetune_all_fn(ds_and_model, num_epochs_finetune=ne_finetune)), # Ditto
         load_pkl(get_pfedme_finetune_all_fn(ds_and_model, num_epochs_finetune=ne_finetune)), # pFedMe
         load_pkl(get_pfl_finetune_all_fn(ds_and_model, pfl_model_name, pfl_algo, **args))  # PFL
     ]
-    clean_name_lst = ["Finetune", "Ditto", "pFedMe", "Adapter"]
+    clean_name_lst = ["Finetune", "Ditto", "pFedMe", pfl_name]
     _, train_metrics_fedavg, _, test_metrics_fedavg = outs[0]
-    
-    
-    for i in range(n_plots):
-        train_sizes, train_metrics, test_sizes, test_metrics = outs[i]
-        # change in loss/accuracy
-        if train_or_test == 'train':
-            test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(train_metrics, train_metrics_fedavg)])
-        else:
-            test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(test_metrics, test_metrics_fedavg)])
-        if min_is_best:
-            test_deltas = -test_deltas
-        if 'accuracy' in metric_name:
-            test_deltas *= 100
-        mean = np.average(test_deltas, weights=test_sizes)
-        xs = train_sizes if x_train_or_test.lower() == 'train' else test_sizes
-        ax[i].scatter(xs, test_deltas, alpha=0.1, **style)
-        ax[i].set_xlabel(f"# Data per client ({x_train_or_test})")
-        if i==0: ax[i].set_ylabel(r"$\Delta$ " + metric_short_rename_dict[metric_name])
-        ax[i].set_title(clean_name_lst[i])
-        ax[i].axhline(y=mean, alpha=0.5, **mean_params)
-        ax[i].axhline(y=0, alpha=0.5, **zero_params)
-    plt.tight_layout()
-    extra_artists = (suptitle,)
+    extra_artists = _scatter_plot_helper_1(
+        f, ax, outs, train_metrics_fedavg, test_metrics_fedavg, 
+        clean_name_lst, metric_name, train_or_test, x_train_or_test, min_is_best, style, 
+        hist2d, xlim, ylim, gridsize
+    )
+    # extra_artists = (suptitle, *extra_artists) 
     return f, extra_artists
+
+def per_user_stats_scatter_plot_full_v_partial_main(ds_and_model, pfl_algo="pfl_alternating", 
+        args={}, metric_name='accuracy', min_is_best=False, x_train_or_test='train',
+        ne_finetune=5, hist2d=False, xlim=None, ylim=None, gridsize=25
+):
+    if hist2d:
+        raise ValueError('Split train-test does not work with hist2d')
+    style = {'color': COLORS[0], 'marker': 'o', 's':100, 'linestyle':"dashed"}
+    n_plots = 4
+    f, ax = plt.subplots(1, n_plots, figsize=(4.5*n_plots, 4), sharey=False)
+    ax = np.asarray([ax[0], ax[2], ax[1], ax[3]])
+    ax[0].sharey(ax[1]); ax[2].sharey(ax[3])  # share axes
+    # suptitle = f.suptitle(dataset_rename_dict_short[ds_and_model], fontsize=18)
+
+    # Gather filenames
+    name_lst = get_name_list(ds_and_model) # PFL names
+    pfl_model_name = "adapter" if "adapter" in name_lst else "tr_layer_3"
+    outs = [
+        load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune", num_epochs_finetune=ne_finetune)),  # FedAvg + Full finetune
+        # load_pkl(get_ditto_finetune_all_fn(ds_and_model, num_epochs_finetune=ne_finetune)), # Ditto
+        # load_pkl(get_pfedme_finetune_all_fn(ds_and_model, num_epochs_finetune=ne_finetune)), # pFedMe
+        load_pkl(get_pfl_finetune_all_fn(ds_and_model, pfl_model_name, pfl_algo, **args))  # PFL
+    ]
+    clean_name_lst = ["Full (train)", "Partial (train)", "Full (test)", "Partial (test)"]
+    _, train_metrics_fedavg, _, test_metrics_fedavg = outs[0]
+    extra_artists_tr = _scatter_plot_helper_1(
+        f, ax[:2], outs, train_metrics_fedavg, test_metrics_fedavg, 
+        clean_name_lst[:2], metric_name, 'train', x_train_or_test, min_is_best, style, 
+        hist2d, xlim, ylim[0], gridsize, annotate=True
+    )
+    extra_artists_te = _scatter_plot_helper_1(
+        f, ax[2:], outs, train_metrics_fedavg, test_metrics_fedavg, 
+        clean_name_lst[2:], metric_name, 'test', x_train_or_test, min_is_best, style, 
+        hist2d, xlim, ylim[1], gridsize, annotate=False
+    )
+    # extra_artists = (suptitle, *extra_artists) 
+    extra_artists = (*extra_artists_tr, *extra_artists_te)
+    return f, extra_artists
+
 
 def per_user_stats_scatter_plot_regularization(ds_and_model, pfl_algo="pfl_alternating", 
         args={}, metric_name='accuracy', min_is_best=False, x_train_or_test='train', train_or_test='test',
+        hist2d=False, xlim=None, ylim=None, gridsize=25
 ):
     style = {'color': COLORS[0], 'marker': 'o', 's':100, 'linestyle':"dashed"}
     if 'emnist' in ds_and_model:
@@ -614,10 +757,9 @@ def per_user_stats_scatter_plot_regularization(ds_and_model, pfl_algo="pfl_alter
         reg_list = [0, 0.1, 100]
     else:
         raise ValueError(f'Unknown ds_and_model {ds_and_model}')
-    # reg_list = [0, '1e-4', '0.001', 0.01, 0.1, '1.0']
     n_plots = len(reg_list)
-    f, ax = plt.subplots(1, n_plots, figsize=(4*n_plots, 4), sharey=True)
-    suptitle = f.suptitle(dataset_rename_dict[ds_and_model], fontsize=18)
+    f, ax = plt.subplots(1, n_plots, figsize=(5*n_plots, 4), sharey=True)
+    # suptitle = f.suptitle(dataset_rename_dict_short[ds_and_model], fontsize=18)
 
     # Gather filenames
     name_lst = get_name_list(ds_and_model) # PFL names
@@ -626,42 +768,24 @@ def per_user_stats_scatter_plot_regularization(ds_and_model, pfl_algo="pfl_alter
         load_pkl(get_pfl_finetune_all_fn(ds_and_model, pfl_model_name, pfl_algo, reg_param=reg, **args))
         for reg in reg_list
     ]
-    clean_name_lst = [f"Reg. Param. = {reg}" for reg in reg_list]
-    _, train_metrics_fedavg, _, test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune"))
-    
-    
-    for i in range(n_plots):
-        train_sizes, train_metrics, test_sizes, test_metrics = outs[i]
-        # change in loss/accuracy
-        if train_or_test == 'train':
-            test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(train_metrics, train_metrics_fedavg)])
-        else:
-            test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(test_metrics, test_metrics_fedavg)])
-        if min_is_best:
-            test_deltas = -test_deltas
-        if 'accuracy' in metric_name:
-            test_deltas *= 100
-        mean = np.average(test_deltas, weights=test_sizes)
-        xs = train_sizes if x_train_or_test.lower() == 'train' else test_sizes
-        ax[i].scatter(xs, test_deltas, alpha=0.1, **style)
-        ax[i].set_xlabel(f"# Data per client ({x_train_or_test})")
-        if i==0: ax[i].set_ylabel(r"$\Delta$ " + metric_short_rename_dict[metric_name])
-        ax[i].set_title(clean_name_lst[i])
-        ax[i].axhline(y=mean, alpha=0.5, **mean_params)
-        ax[i].axhline(y=0, alpha=0.5, **zero_params)
-    plt.tight_layout()
-    extra_artists = (suptitle,)
+    clean_name_lst = [f"Reg. Param. = {reg}" for reg in ['0', 'best', 'large']]
+    _, train_metrics_fedavg, _, test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune")) 
+    extra_artists = _scatter_plot_helper_1(
+        f, ax, outs, train_metrics_fedavg, test_metrics_fedavg, 
+        clean_name_lst, metric_name, train_or_test, x_train_or_test, min_is_best, style, 
+        hist2d, xlim, ylim, gridsize
+    )
+    # extra_artists = (suptitle, *extra_artists) 
     return f, extra_artists
 
 def per_user_stats_scatter_plot_dropout(ds_and_model, pfl_algo="pfl_alternating", 
         args={}, metric_name='accuracy', min_is_best=False, x_train_or_test='train', train_or_test='test',
+        hist2d=False, xlim=None, ylim=None, gridsize=25
 ):
     style = {'color': COLORS[0], 'marker': 'o', 's':100, 'linestyle':"dashed"}
-    dropout_list = [0, 0.3, 0.5, 0.7, 0.9]
+    dropout_list = [0, 0.3, 0.7]
     n_plots = len(dropout_list)
-    f, ax = plt.subplots(1, n_plots, figsize=(4*n_plots, 4), sharey=True)
-    suptitle = f.suptitle(dataset_rename_dict[ds_and_model], fontsize=18)
-
+    f, ax = plt.subplots(1, n_plots, figsize=(5*n_plots, 4), sharey=True)
     # Gather filenames
     name_lst = get_name_list(ds_and_model) # PFL names
     pfl_model_name = "adapter" if "adapter" in name_lst else "tr_layer_3"  # TODO!
@@ -669,116 +793,150 @@ def per_user_stats_scatter_plot_dropout(ds_and_model, pfl_algo="pfl_alternating"
         load_pkl(get_pfl_finetune_all_fn(ds_and_model, pfl_model_name, pfl_algo, dropout=dropout, **args))
         for dropout in dropout_list
     ]
-    clean_name_lst = [f"Dropout = {dropout}" for dropout in dropout_list]
+    clean_name_lst = [f"Dropout = {dropout}" for dropout in [0, 'best', 'large']]
     _, train_metrics_fedavg, _, test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune"))
-    
-    
-    for i in range(n_plots):
-        train_sizes, train_metrics, test_sizes, test_metrics = outs[i]
-        # change in loss/accuracy
-        if train_or_test == 'train':
-            test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(train_metrics, train_metrics_fedavg)])
-        else:
-            test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(test_metrics, test_metrics_fedavg)])
-        if min_is_best:
-            test_deltas = -test_deltas
-        if 'accuracy' in metric_name:
-            test_deltas *= 100
-        mean = np.average(test_deltas, weights=test_sizes)
-        xs = train_sizes if x_train_or_test.lower() == 'train' else test_sizes
-        ax[i].scatter(xs, test_deltas, alpha=0.1, **style)
-        ax[i].set_xlabel(f"# Data per client ({x_train_or_test})")
-        if i==0: ax[i].set_ylabel(r"$\Delta$ " + metric_short_rename_dict[metric_name])
-        ax[i].set_title(clean_name_lst[i])
-        ax[i].axhline(y=mean, alpha=0.5, **mean_params)
-        ax[i].axhline(y=0, alpha=0.5, **zero_params)
-    plt.tight_layout()
-    extra_artists = (suptitle,)
+    extra_artists = _scatter_plot_helper_1(
+        f, ax, outs, train_metrics_fedavg, test_metrics_fedavg, 
+        clean_name_lst, metric_name, train_or_test, x_train_or_test, min_is_best, style, 
+        hist2d, xlim, ylim, gridsize
+    )
     return f, extra_artists
 
-def per_user_stats_scatter_plot_2(ds_and_model, pfl_algo="pfl_alternating", 
-        args={}, metric_name='accuracy', min_is_best=False, kdeplot=False
-):
-    style = {'color': COLORS[0], 'marker': 'o', 's':100, 'linestyle':"dashed"}
-    name_lst = get_name_list(ds_and_model)
-    n_plots = len(name_lst)
-    f, ax = plt.subplots(1, n_plots, figsize=(4*n_plots, 4))
-    suptitle = f.suptitle(dataset_rename_dict[ds_and_model], fontsize=18)
-    for i in range(n_plots):
-        out = load_pkl(get_pfl_finetune_all_fn(
-            ds_and_model, name_lst[i], pfl_algo, **args
-        ))
-        train_sizes, _, test_sizes, test_metrics = out
-        test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune"))[-1] # load the metrics only
-        # change in accuracy
-        test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(test_metrics, test_metrics_fedavg)])
-        if min_is_best:
-            test_deltas = -test_deltas
-        if "accuracy" in metric_name:
-            test_deltas *= 100
-        mean = np.average(test_deltas, weights=test_sizes)
-        xs = np.asarray([t1[metric_name].iloc[0] for t1 in test_metrics_fedavg]) * 100
-        if kdeplot:
-            sns.kdeplot(x=xs, y=test_deltas, ax=ax[i])
-        else:
-            ax[i].scatter(xs, test_deltas, alpha=0.1, **style)
-        print(ds_and_model, i, pearsonr(xs, test_deltas))
-        ax[i].set_xlabel(f"Non-pers. Accuracy %")
-        ax[i].set_ylabel(r"$\Delta$ " + metric_short_rename_dict[metric_name])
-        ax[i].set_title(rename_one_item(name_lst[i]))
-        ax[i].axhline(y=mean, alpha=0.5, **mean_params)
-        ax[i].axhline(y=0, alpha=0.8, **zero_params)
-
-    plt.tight_layout()
-    extra_artists = (suptitle,)
-    return f, extra_artists
-
-def per_user_stats_scatter_plot_3(ds_and_model, pfl_algo="pfl_alternating", 
-        args={}, metric_name='accuracy', min_is_best=False, boxplot=False
-):
-    style = {'color': COLORS[0], 'marker': 'o', 's':100, 'linestyle':"dashed"}
-    name_lst = get_name_list(ds_and_model)
-    n_plots = len(name_lst)
-    f, ax = plt.subplots(1, 1, figsize=(5, 4))
-    ax.set_title(dataset_rename_dict[ds_and_model], fontsize=18)
+def _boxplot_helper_3(outs, train_metrics_fedavg, test_metrics_fedavg, ax, clean_name_lst, metric_name, 
+                      train, min_is_best, boxplot, rotation, annotate):
+    ax.axhline(y=0, alpha=0.5, **zero_params)
+    n_plots = len(clean_name_lst)
     data = {}
     for i in range(n_plots):
-        out = load_pkl(get_pfl_finetune_all_fn(
-            ds_and_model, name_lst[i], pfl_algo, **args
-        ))
-        train_sizes, _, test_sizes, test_metrics = out
-        test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune"))[-1] # load the metrics only
+        train_sizes, train_metrics, test_sizes, test_metrics = outs[i]
         # change in accuracy
-        test_deltas = [t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(test_metrics, test_metrics_fedavg)]
+        if train:
+            test_deltas = [100*(t[metric_name].iloc[-1] - t1[metric_name].iloc[0]) for t, t1 in zip(train_metrics, train_metrics_fedavg)]
+        else:
+            test_deltas = [100*(t[metric_name].iloc[-1] - t1[metric_name].iloc[0]) for t, t1 in zip(test_metrics, test_metrics_fedavg)]
         if min_is_best:
             test_deltas = -test_deltas
-        test_deltas *= 100
-        data[name_lst[i]] = test_deltas
+        data[clean_name_lst[i]] = test_deltas
     data = pd.DataFrame(data)
     if boxplot:
-        sns.boxplot(data=data)
+        sns.boxplot(data=data, ax=ax)
     else:
-        sns.violinplot(data=data)
-    plt.tight_layout()
-    extra_artists = ()
-    return f, extra_artists
-            
-def per_user_stats_scatter_plot_4(ds_and_model, pfl_algo="pfl_alternating", 
-        args={}, seeds=list(range(1, 6)), metric_name='accuracy', min_is_best=False, train=False
+        sns.violinplot(data=data, ax=ax)
+    ax.set_yticklabels([rf'${round(a)}$' for a in ax.get_yticks()], size=12)
+    ax.set_xticklabels(ax.get_xticklabels(),rotation=rotation, size=18)
+    ax.set_ylabel(r'$\Delta$ Accuracy', fontsize=18)
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    ax.fill_between([xlim[0], xlim[1]], [0, 0], [ylim[1], ylim[1]], color=COLORS[-1], alpha=0.1, zorder=-1)
+    ax.fill_between([xlim[0], xlim[1]], [0, 0], [ylim[0], ylim[0]], color=COLORS[3], alpha=0.1, zorder=-1)
+    if annotate:
+        ax.text(0.63 * xlim[1], 0.85 * ylim[1], "Pers. helps", fontdict=dict(fontsize=15),
+                bbox=dict(boxstyle="round", fc="none", ec="gray"))
+        ax.text(0.63 * xlim[1], 0.88 * ylim[0], "Pers. hurts", fontdict=dict(fontsize=15),
+                bbox=dict(boxstyle="round", fc="none", ec="gray"))
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+
+def per_user_stats_scatter_plot_3(ds_and_model, ax=None, pfl_algo="pfl_alternating", 
+        args={}, metric_name='accuracy', train=False, min_is_best=False, boxplot=False, rotation=0, annotate=True
 ):
-    style = {'color': COLORS[0], 'marker': 'o', 's':100, 'linestyle':"dashed"}
-    name_lst = get_name_list(ds_and_model)
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(5, 4))
+    name_lst = get_name_list(ds_and_model)[:3]
     n_plots = len(name_lst)
-    f, ax = plt.subplots(1, n_plots, figsize=(4*n_plots, 4))
-    suptitle = f.suptitle(dataset_rename_dict[ds_and_model], fontsize=18)
+    ax.set_title(dataset_rename_dict_short[ds_and_model], fontsize=18)
+    outs = [
+        load_pkl(get_pfl_finetune_all_fn(
+            ds_and_model, name_lst[i], pfl_algo, **args
+        )) for i in range(n_plots)
+    ]
     _, train_metrics_fedavg, _, test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune")) # load the metrics only
+    clean_name_lst = ["Adapter" if 'adapter' in name else rename_one_item(name) for name in name_lst]
+    _boxplot_helper_3(outs, train_metrics_fedavg, test_metrics_fedavg, ax, clean_name_lst, metric_name, train, min_is_best, boxplot, rotation, annotate)
+
+def per_user_scatter_plot_3_full_v_partial(ds_and_model, ax=None, pfl_algo="pfl_alternating", 
+        args={}, metric_name='accuracy', train=False, min_is_best=False, 
+        boxplot=False, rotation=0, ne_finetune=5, annotate=True
+):
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(5, 4))
+    ax.set_title('Per-device Statistics ({})'.format('train' if train else 'test'))
+    name_lst = get_name_list(ds_and_model) # PFL names
+    # pfl_model_name = "adapter" if "adapter" in name_lst else "adapter_16"
+    pfl_model_name = "out_layer" if "out_layer" in name_lst else "tr_layer_3"
+    outs = [
+        load_pkl(get_ditto_finetune_all_fn(ds_and_model, num_epochs_finetune=ne_finetune)), # Ditto
+        load_pkl(get_pfedme_finetune_all_fn(ds_and_model, num_epochs_finetune=ne_finetune)), # pFedMe
+        load_pkl(get_pfl_finetune_all_fn(ds_and_model, pfl_model_name, pfl_algo, **args))  # PFL
+    ]
+    clean_name_lst = ["Ditto", "pFedMe", pfl_name]
+    _, train_metrics_fedavg, _, test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune")) # load the metrics only
+    _boxplot_helper_3(outs, train_metrics_fedavg, test_metrics_fedavg, ax, clean_name_lst, metric_name, train, min_is_best, boxplot, rotation, annotate)
+
+def per_user_stats_scatter_plot_3_regularization(ds_and_model, ax=None, pfl_algo="pfl_alternating", 
+        args={}, metric_name='accuracy', train=False, min_is_best=False, boxplot=False, rotation=0, annotate=True
+):
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(5, 4))
+    if 'emnist' in ds_and_model:
+        reg_list = [0, 0.1, 100]
+    elif 'so_mini' in ds_and_model:
+        reg_list = [0, 0.001, 10]
+    elif 'gldv2' in ds_and_model:
+        reg_list = [0, 0.1, 100]
+    else:
+        raise ValueError(f'Unknown ds_and_model {ds_and_model}')
+    n_plots = len(reg_list)
+
+    # Gather filenames
+    name_lst = get_name_list(ds_and_model) # PFL names
+    pfl_model_name = "adapter" if "adapter" in name_lst else "adapter_16"
+    outs = [
+        load_pkl(get_pfl_finetune_all_fn(ds_and_model, pfl_model_name, pfl_algo, reg_param=reg, **args))
+        for reg in reg_list
+    ]
+    _, train_metrics_fedavg, _, test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune")) # load the metrics only
+    clean_name_lst = ["No Reg.", "Best Reg.", "Large Reg."]
+    ax.set_title('Effect of Regularization ({})'.format('train' if train else 'test'), fontsize=18)
+    _boxplot_helper_3(outs, train_metrics_fedavg, test_metrics_fedavg, ax, clean_name_lst, metric_name, train, min_is_best, boxplot, rotation, annotate)
+
+def per_user_stats_scatter_plot_3_dropout(ds_and_model, ax=None, pfl_algo="pfl_alternating", 
+        args={}, metric_name='accuracy', train=False, min_is_best=False, boxplot=False, rotation=0, annotate=True
+):
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(5, 4))
+    if 'emnist' in ds_and_model:
+        do_list = [0, 0.3, 0.7]
+        pfl_model_name = 'adapter'
+    elif 'so_mini' in ds_and_model:
+        do_list = [0, 0.3, 0.7]
+        pfl_model_name = 'tr_layer_3'
+    elif 'gldv2' in ds_and_model:
+        do_list = [0, 0.3, 0.7]
+        pfl_model_name = 'adapter'
+    else:
+        raise ValueError(f'Unknown ds_and_model {ds_and_model}')
+    n_plots = len(do_list)
+
+    # Gather filenames
+    outs = [
+        load_pkl(get_pfl_finetune_all_fn(ds_and_model, pfl_model_name, pfl_algo, dropout=dropout, **args))
+        for dropout in do_list
+    ]
+    _, train_metrics_fedavg, _, test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune")) # load the metrics only
+    clean_name_lst = ["No d/o", "Best d/o", "Large d/o"]
+    ax.set_title('Effect of Dropout ({})'.format('train' if train else 'test'), fontsize=18)
+    _boxplot_helper_3(outs, train_metrics_fedavg, test_metrics_fedavg, ax, clean_name_lst, metric_name, train, min_is_best, boxplot, rotation, annotate)
+            
+def _scatter_plot_helper_4(
+    f, ax, outs, train_metrics_fedavg, test_metrics_fedavg, 
+    seeds, clean_name_lst, metric_name, min_is_best, ylims, ylim, train, annotate
+):
+    n_plots = len(ax)
     for i in range(n_plots):
         test_deltas_lst = []
-        for seed in seeds:
-            out = load_pkl(get_pfl_finetune_all_fn(
-                ds_and_model, name_lst[i], pfl_algo, seed=seed, **args
-            ))
-            train_sizes, train_metrics, test_sizes, test_metrics = out    
+        for j, seed in enumerate(seeds):
+            train_sizes, train_metrics, test_sizes, test_metrics = outs[j][i]  
             # change in accuracy
             if train:
                 test_deltas = [t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(train_metrics, train_metrics_fedavg)]
@@ -798,24 +956,79 @@ def per_user_stats_scatter_plot_4(ds_and_model, pfl_algo="pfl_alternating",
         xs = np.arange(idxs.shape[0])+1
         mean_per_client, std_per_client = mean_per_client[idxs], std_per_client[idxs]
         max_per_client, min_per_client = max_per_client[idxs], min_per_client[idxs]
-        ax[i].plot(xs, mean_per_client, linestyle='dashed')
-        ax[i].fill_between(xs, max_per_client, min_per_client, alpha=0.6)
-        ax[i].set_xlabel('Client Id')
+        idx1 = np.argmax((max_per_client - min_per_client) * ((mean_per_client < 0) & (max_per_client > 0) & (min_per_client < 0)).astype(np.float64))  # negative mean
+        idx2 = np.argmax((max_per_client - min_per_client) * ((mean_per_client > 0) & (max_per_client > 0) & (min_per_client < 0)).astype(np.float64))  # positive mean
+        ax[i].plot(xs, mean_per_client, linestyle='solid', label='mean per device' if i==0 else None)
+        ax[i].fill_between(xs, max_per_client, min_per_client, alpha=0.6, label='max/min per device' if i==0 else None)
+        ax[i].set_xlabel('Device Rank')
         ax[i].set_ylabel(r'$\Delta$ ' + metric_short_rename_dict[metric_name])
-        ax[i].set_title(rename_one_item(name_lst[i]))
-        ax[i].axhline(y=0, alpha=0.3, **zero_params)
+        ax[i].set_title(clean_name_lst[i])
+        ax[i].axhline(y=0, alpha=0.5, **zero_params)
+        if annotate:
+            idxs = np.asarray([idx1, idx2])
+            yerr = np.stack([mean_per_client[idxs] - min_per_client[idxs], max_per_client[idxs] - mean_per_client[idxs]], axis=0)
+            # print(idxs, mean_per_client[idxs], min_per_client[idxs], max_per_client[idxs])
+            ax[i].scatter(
+                idxs, mean_per_client[idxs],
+                marker='o', color=COLORS[1], s=100, alpha=0.5, zorder=10
+            )
+            ax[i].errorbar(
+                idxs, mean_per_client[idxs], yerr=yerr,
+                fmt='none', color=COLORS[1], markersize=12, alpha=0.5, zorder=11, capsize=5, capthick=3
+            )
+        if ylims is not None and len(ylims) == n_plots:
+            ylim = ylims[i]
+        if ylim is not None:
+            ax[i].set_ylim(ylim)
+    if annotate:
+        lgd = f.legend(loc='upper center', bbox_to_anchor=(0.5, -0.01), ncol=2)
+        extra_artists = (lgd,)
+        ylim = ax[0].get_ylim()
+        xlim = ax[0].get_xlim()
+        _x = 0.3 * xlim[0] + 0.7 * xlim[1]
+        ax[0].annotate("Pers. helps", xy=(_x, 0),  xytext=(_x, 0.8 * ylim[1]), 
+            xycoords='data', textcoords='data',
+            bbox=dict(boxstyle="round", fc="none", ec="gray"), fontsize=12,
+            ha='center', arrowprops=dict(arrowstyle="<|-"))
+        ax[0].annotate("Pers. hurts", xy=(_x, 0),  xytext=(_x, 0.8 * ylim[0]), 
+            xycoords='data', textcoords='data',
+            bbox=dict(boxstyle="round", fc="none", ec="gray"), fontsize=12,
+            ha='center', arrowprops=dict(arrowstyle="<|-"))
+    else:
+        extra_artists = ()
     plt.tight_layout()
-    extra_artists = (suptitle,)
+    return extra_artists
+        
+def per_user_stats_scatter_plot_4(ds_and_model, pfl_algo="pfl_alternating", 
+        args={}, seeds=list(range(1, 6)), metric_name='accuracy', min_is_best=False, ylims=None, ylim=None, train=False,
+        annotate=False, 
+):
+    name_lst = get_name_list(ds_and_model)[:3]
+    n_plots = len(name_lst)
+    f, ax = plt.subplots(1, n_plots, figsize=(4.5*n_plots, 4))
+    # suptitle = f.suptitle(dataset_rename_dict_short[ds_and_model], fontsize=18)
+    _, train_metrics_fedavg, _, test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune")) # load the metrics only
+    outs = [[
+        load_pkl(get_pfl_finetune_all_fn(
+            ds_and_model, name_lst[i], pfl_algo, seed=seed, **args
+        )) for i in range(n_plots)] for seed in seeds
+    ]
+    clean_name_lst = [rename_one_item(name_lst[i]) for i in range(n_plots)]
+    _scatter_plot_helper_4(
+        f, ax, outs, train_metrics_fedavg, test_metrics_fedavg, 
+        seeds, clean_name_lst, metric_name, min_is_best, ylims, ylim, train, annotate
+    )
+    # extra_artists = (suptitle,)
+    extra_artists = ()
     return f, extra_artists
 
 def per_user_stats_scatter_plot_full_v_partial_4(ds_and_model, seeds=list(range(1, 6)), pfl_algo="pfl_alternating", 
-        args={}, metric_name='accuracy', min_is_best=False, train=False,
-        ne_finetune=5,
+        args={}, metric_name='accuracy', min_is_best=False, ylims=None, ylim=None, train=False,
+        ne_finetune=5,  annotate=False
 ):
-    style = {'color': COLORS[0], 'marker': 'o', 's':100, 'linestyle':"dashed"}
     n_plots = 4
     f, ax = plt.subplots(1, n_plots, figsize=(4*n_plots, 4), sharey=True)
-    suptitle = f.suptitle(dataset_rename_dict[ds_and_model], fontsize=18)
+    # suptitle = f.suptitle(dataset_rename_dict_short[ds_and_model], fontsize=18)
 
     # Gather filenames
     name_lst = get_name_list(ds_and_model) # PFL names
@@ -826,96 +1039,58 @@ def per_user_stats_scatter_plot_full_v_partial_4(ds_and_model, seeds=list(range(
             load_pkl(get_pfedme_finetune_all_fn(ds_and_model, seed=seed, num_epochs_finetune=ne_finetune)), # pFedMe
             load_pkl(get_pfl_finetune_all_fn(ds_and_model, pfl_model_name, pfl_algo, seed=seed, **args))  # PFL
         ] for seed in seeds]
-    clean_name_lst = ["Finetune", "Ditto", "pFedMe", "Adapter"]
+    clean_name_lst = ["Finetune", "Ditto", "pFedMe", pfl_name]
     _, train_metrics_fedavg, _, test_metrics_fedavg = outs[0][0]
-    
-    for i in range(n_plots):
-        test_deltas_lst = []
-        for j, seed in enumerate(seeds):
-            train_sizes, train_metrics, test_sizes, test_metrics = outs[j][i]
-            # change in loss/accuracy
-            if train:
-                test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(train_metrics, train_metrics_fedavg)])
-            else:
-                test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[0] for t, t1 in zip(test_metrics, test_metrics_fedavg)])
-            test_deltas_lst.append(test_deltas)
-        test_deltas = np.stack(test_deltas_lst)  # (seed, client)
-        if min_is_best:
-            test_deltas = -test_deltas
-        if 'accuracy' in metric_name:
-            test_deltas *= 100
-        mean_per_client = np.mean(test_deltas, axis=0)
-        std_per_client = np.std(test_deltas, axis=0)
-        max_per_client = np.max(test_deltas, axis=0)
-        min_per_client = np.min(test_deltas, axis=0)
-        idxs = np.argsort(mean_per_client)
-        xs = np.arange(idxs.shape[0])+1
-        mean_per_client, std_per_client = mean_per_client[idxs], std_per_client[idxs]
-        max_per_client, min_per_client = max_per_client[idxs], min_per_client[idxs]
-        overall_mean = np.average(mean_per_client, weights=test_sizes)
-        ax[i].plot(xs, mean_per_client, linestyle='dashed')
-        ax[i].fill_between(xs, max_per_client, min_per_client, alpha=0.6)
-        ax[i].set_xlabel('Client Id (Permuted)')
-        if i==0: ax[i].set_ylabel(r'$\Delta$ ' + metric_short_rename_dict[metric_name])
-        ax[i].set_title(clean_name_lst[i])
-        ax[i].axhline(y=0, alpha=0.3, **zero_params)
-        ax[i].axhline(y=overall_mean, alpha=0.5, **mean_params)
-    plt.tight_layout()
-    extra_artists = (suptitle,)
+
+    _scatter_plot_helper_4(
+        f, ax, outs, train_metrics_fedavg, test_metrics_fedavg, 
+        seeds, clean_name_lst, metric_name, min_is_best, ylims, ylim, train, annotate
+    )
+    # extra_artists = (suptitle,)
+    extra_artists = ()
     return f, extra_artists
 
 
-def per_user_stats_scatter_plot_full_v_partial_5(ds_and_model, seeds=list(range(1, 6)), pfl_algo="pfl_alternating", 
-        args={}, metric_name='accuracy', min_is_best=False, 
-        ne_finetune=5,
+def per_user_stats_scatter_plot_full_v_partial_4_main(ds_and_model, seeds=list(range(1, 6)), pfl_algo="pfl_alternating", 
+        args={}, metric_name='accuracy', min_is_best=False, ylims=None, ylim=None, train=False,
+        ne_finetune=5, annotate=True
 ):
-# Generalization gap per client
     style = {'color': COLORS[0], 'marker': 'o', 's':100, 'linestyle':"dashed"}
-    n_plots = 4
+    n_plots = 2
     f, ax = plt.subplots(1, n_plots, figsize=(4*n_plots, 4), sharey=True)
-    suptitle = f.suptitle(dataset_rename_dict[ds_and_model], fontsize=18)
 
     # Gather filenames
     name_lst = get_name_list(ds_and_model) # PFL names
-    pfl_model_name = "adapter" if "adapter" in name_lst else "adapter_16"
+    pfl_model_name = "adapter" if "adapter" in name_lst else "tr_layer_3"
     outs = [[
-            load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune", seed=seed, num_epochs_finetune=ne_finetune)),  # FedAvg + Full finetune
             load_pkl(get_ditto_finetune_all_fn(ds_and_model, seed=seed, num_epochs_finetune=ne_finetune)), # Ditto
-            load_pkl(get_pfedme_finetune_all_fn(ds_and_model, seed=seed, num_epochs_finetune=ne_finetune)), # pFedMe
             load_pkl(get_pfl_finetune_all_fn(ds_and_model, pfl_model_name, pfl_algo, seed=seed, **args))  # PFL
         ] for seed in seeds]
-    clean_name_lst = ["Finetune", "Ditto", "pFedMe", "Adapter"]
-    # _, train_metrics_fedavg, _, test_metrics_fedavg = outs[0][0]
-    
-    for i in range(n_plots):
-        test_deltas_lst = []
-        for j, seed in enumerate(seeds):
-            train_sizes, train_metrics, test_sizes, test_metrics = outs[j][i]
-            # change in loss/accuracy
-            test_deltas = np.asarray([t[metric_name].iloc[-1] - t1[metric_name].iloc[-1] for t, t1 in zip(train_metrics, test_metrics)])
-            test_deltas_lst.append(test_deltas)
-        test_deltas = np.stack(test_deltas_lst)  # (seed, client)
-        if min_is_best:
-            test_deltas = -test_deltas
-        if 'accuracy' in metric_name:
-            test_deltas *= 100
-        mean_per_client = np.mean(test_deltas, axis=0)
-        std_per_client = np.std(test_deltas, axis=0)
-        max_per_client = np.max(test_deltas, axis=0)
-        min_per_client = np.min(test_deltas, axis=0)
-        idxs = np.argsort(mean_per_client)
-        xs = np.arange(idxs.shape[0])+1
-        mean_per_client, std_per_client = mean_per_client[idxs], std_per_client[idxs]
-        max_per_client, min_per_client = max_per_client[idxs], min_per_client[idxs]
-        overall_mean = np.average(mean_per_client, weights=test_sizes)
-        ax[i].plot(xs, mean_per_client, linestyle='dashed')
-        ax[i].fill_between(xs, max_per_client, min_per_client, alpha=0.6)
-        ax[i].set_xlabel('Client Id (Permuted)')
-        if i==0: ax[i].set_ylabel(r'$\Delta$ ' + metric_short_rename_dict[metric_name])
-        ax[i].set_title(clean_name_lst[i])
-        ax[i].axhline(y=0, alpha=0.3, **zero_params)
-        ax[i].axhline(y=overall_mean, alpha=0.5, **mean_params)
-    plt.tight_layout()
-    extra_artists = (suptitle,)
+    clean_name_lst = ["Ditto", pfl_name]
+    _, train_metrics_fedavg, _, test_metrics_fedavg = outs[0][0]  # Ditto + pretrained = fedavg output
+
+    extra_artists = _scatter_plot_helper_4(
+        f, ax, outs, train_metrics_fedavg, test_metrics_fedavg, 
+        seeds, clean_name_lst, metric_name, min_is_best, ylims, ylim, train, annotate
+    )
     return f, extra_artists
 
+# Per client 
+def per_user_sizes(ds_and_model, ax, test=False, bins='auto'):
+    out = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune", num_epochs_finetune=5))
+    train_sizes, _, test_sizes, _ = out
+    sizes = test_sizes if test else train_sizes
+    sns.histplot(sizes, bins=bins, kde=True, stat='count', ax=ax, alpha=0.2)
+    if ds_and_model == 'so_mini':
+        suffix = " (words)"
+    else:
+        suffix = " (images)"
+    ax.set_xlabel('# Data per device' + suffix)
+    ax.set_ylabel('Count')
+    ax.set_title(dataset_rename_dict_short[ds_and_model])
+    # Print other stats
+    median = np.median(sizes)
+    m1 = np.max(sizes)
+    m2 = np.min(sizes)
+    m = np.mean(sizes)
+    print(f'''{ds_and_model}\t median: {median}\t max: {m1}\t min: {m2}\t mean: {m}''')
