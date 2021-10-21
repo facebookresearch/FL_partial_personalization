@@ -163,6 +163,7 @@ def add_model_args(parser):
     model_parser.add_argument('--vocab_size', type=int, default=10000)
     model_parser.add_argument('--num_oov_buckets', type=int, default=1)
     model_parser.add_argument('--arch_size', type=str, default='tiny')
+    model_parser.add_argument('--model_dropout', type=float, default=0)
     model_parser.add_argument('--max_grad_norm', type=float, default=0.25)
     model_parser.add_argument('--clip_grad_norm', action='store_true')  # If true, clip grad norm
 
@@ -201,8 +202,13 @@ def update_arch_params_from_arch_size(args):
         args.fc_hidden_dim = 1536
     else:
         raise ValueError(f'Unknown arch size: {args.arch_size}')
-    args.dropout_tr = 0
-    args.dropout_io = 0
+    if 0 < args.model_dropout < 1:
+        args.dropout_tr = args.model_dropout
+        args.dropout_io = args.model_dropout
+        print('Using dropout =', args.model_dropout)
+    else:
+        args.dropout_tr = 0
+        args.dropout_io = 0
 
 def setup_centralized_optimizer_from_args(args, model, num_clients_to_process):
     lr = args.lr
