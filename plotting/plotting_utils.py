@@ -86,16 +86,12 @@ mean_params_hist = dict(color=COLORS[6], linestyle='dashed', linewidth=2)
 
 
 from socket import gethostname
-if 'devfair' in gethostname():
+if 'devfair' in gethostname():  # fair cluster
     MAIN_DIR = '/checkpoint/pillutla/pfl'
-elif 'pillutla-mbp' in gethostname():
+elif 'pillutla-mbp' in gethostname(): # laptop
     MAIN_DIR = '/Users/pillutla/Dropbox (Facebook)/code/pfl_outputs'
-elif 'zh-' in gethostname():
-    MAIN_DIR = '/mnt/hdd/pillutla/fair'
-elif gethostname() == 'kakade-workstation':
-    MAIN_DIR = '/home/pillutla/fl/pfl_outputs'
-else:  # personal laptop
-    MAIN_DIR = None
+else:
+    raise ValueError('Unknown host')
 
 OUTPUT_DIR_FL = f"{MAIN_DIR}/outputs2"
 OUTPUT_DIR_PFL = f"{MAIN_DIR}/outputs3"
