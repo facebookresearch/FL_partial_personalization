@@ -39,7 +39,7 @@ common_args="${common_args} --arch_size ${arch_size} \
 # Populate the array
 list_of_jobs=()
 
-pfl_algo="pfl_alternating"
+pfl_algo="fedalt"
 train_mode="tr_layer"
 layers_to_finetune="3"
 

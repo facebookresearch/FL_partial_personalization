@@ -36,7 +36,7 @@ common_args="${common_args} --client_scheduler const --use_pretrained_model --lo
 # Populate the array
 list_of_jobs=()
 
-pfl_algo="pfl_alternating"
+pfl_algo="fedalt"
 train_mode="adapter"
 
 for seed in 1 2 3 4 5

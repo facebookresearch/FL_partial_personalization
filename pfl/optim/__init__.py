@@ -1,7 +1,7 @@
 from .fedavg import FedAvg
-from .pfl_simultaneous import PFLJointTrain
-from .pfl_alternating import PFLAlternatingTrain
+from .fedsim import FedSim
+from .fedalt import FedAlt
 from .pfedme import PFedMe
 from . import utils
 
-__all__ = [utils, FedAvg, PFLJointTrain, PFLAlternatingTrain, PFedMe]
+__all__ = [utils, FedAvg, FedSim, FedAlt, PFedMe]

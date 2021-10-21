@@ -40,7 +40,7 @@ common_args="${common_args} --arch_size ${arch_size} \
 list_of_jobs=()
 
 seed=1
-pfl_algo="pfl_alternating"
+pfl_algo="fedalt"
 train_mode="adapter"
 hidden_dim=16
 

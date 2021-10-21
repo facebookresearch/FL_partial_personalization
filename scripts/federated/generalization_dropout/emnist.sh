@@ -33,7 +33,7 @@ common_args="${common_args}  --client_scheduler const --server_optimizer sgd --s
     "
 
 seed=1
-pfl_algo="pfl_alternating"
+pfl_algo="fedalt"
 train_mode="adapter"
 
 # Populate the array

@@ -36,7 +36,7 @@ list_of_jobs=()
 seed=1
 state="stateful"
 init="pretrained"
-pfl_algo="pfl_alternating"
+pfl_algo="fedalt"
 train_mode="adapter"
 hidden_dim=16
 

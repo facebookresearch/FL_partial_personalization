@@ -37,7 +37,7 @@ seed=1
 # Populate the array
 list_of_jobs=()
 
-for pfl_algo in "pfl_joint" "pfl_alternating"
+for pfl_algo in "fedsim" "fedalt"
 do
 for train_mode in "inp_layer" "out_layer" "adapter"
 do

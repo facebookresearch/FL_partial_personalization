@@ -5,7 +5,7 @@ import torch
 from .pfl_base import SplitFLBase
 from .utils import get_client_optimizer
 
-class PFLAlternatingTrain(SplitFLBase):
+class FedAlt(SplitFLBase):
     """Split learning approach to PFL where client and server maintain non-overlapping subsets of parameters.
         Client and server components are trained alternatingly.
     """

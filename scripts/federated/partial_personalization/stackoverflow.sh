@@ -41,7 +41,7 @@ list_of_jobs=()
 
 seed=1
 
-for pfl_algo in "pfl_joint" "pfl_alternating"
+for pfl_algo in "fedsim" "fedalt"
 do
 
 train_mode="tr_layer"
