@@ -2,10 +2,10 @@ from collections import OrderedDict
 import copy
 import torch
 
-from .pfl_base import SplitFLBase
+from .pfl_base import PartialPFLBase
 from .utils import get_client_optimizer
 
-class FedAlt(SplitFLBase):
+class FedAlt(PartialPFLBase):
     """Split learning approach to PFL where client and server maintain non-overlapping subsets of parameters.
         Client and server components are trained alternatingly.
     """

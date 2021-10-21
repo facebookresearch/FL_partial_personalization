@@ -5,8 +5,8 @@ import torch
 from .base import FedBase
 from .utils import get_client_optimizer
 
-class SplitFLBase(FedBase):
-    """Split learning approach to PFL where client and server maintain non-overlapping subsets of parameters.
+class PartialPFLBase(FedBase):
+    """Partial personalization approach to PFL where client and server maintain non-overlapping subsets of parameters.
     """
     def __init__(self, train_fed_loader, available_clients, clients_to_cache, server_model, client_model,
                  server_optimizer, server_lr, server_momentum, max_grad_norm, clip_grad_norm,
