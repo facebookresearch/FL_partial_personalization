@@ -28,33 +28,26 @@ Scripts
 ----------
 Here is the breakdown of the directory `scripts/federated`. This contains the scripts to run steps 1 and 2 of the pipeline.
 - `scripts/federated/pretrain`: pretrain each model with FedAvg variants
-- `scripts/federated/main_stateful_pretrained`: train partial personalization with stateful clients (the setting of the paper)
-- `scripts/federated/main_stateless_pretrained`: train partial personalization in a stateless manner (considered in the appendix)
+- `scripts/federated/partial_personalization`: train partial personalization with stateful clients
 - `scripts/federated/pfedme`: run personalization with pFedMe
-- `scripts/federated/regularization`: train partial personalization with local regularization (for the generalization experiments)
-- `scripts/federated/reg_dropout`: train partial personalization with dropout (for the generalization experiments)
+- `scripts/federated/generalization_L2`: train partial personalization with local regularization (for the generalization experiments)
+- `scripts/federated/generaliazation_dropout`: train partial personalization with dropout (for the generalization experiments)
 
 Here is the breakdown of the directory `scripts/finetune`. This containts the scripts to run step 3 of the pipeline.
-- `scripts/finetune/fedavg`: finetune pretrained model either fully or partially (same model parts as PFL)
+- `scripts/finetune/finetune`: finetune pretrained model either fully or partially (same model parts as partial personalization)
 - `scripts/finetune/ditto`: finetune pretrained models with L2 regularization (Ditto objective)
-- `scripts/finetune/pfl`: finetune PFL models
+- `scripts/finetune/partial_personalization`: finetune models trained with FedAlt/FedSim
 - `scripts/finetune/pfedme`: finetune pFedMe models
-- `scripts/finetune/pfl_reg`: finetune PFL + regularization models (for the generalization experiments)
-- `scripts/finetune/pfl_dropout`: finetune PFL + dropout models (for the generalization experiments)
+- `scripts/finetune/generalization_L2`: finetune PFL + regularization models
+- `scripts/finetune/generalization_dropout`: finetune PFL + dropout models
 
 Example use of scripts
 -----------------------
-To reproduce the experiments of FedAlt on StackOverflow, we make the following choices:
-- dataset: stackoverflow (also `so`)
-- model: transformer
-- model size: mini (4 layers + 4 attention heads)
-- optimization algorithm: fedalt
-
 The scripts for the experimental pipeline are:
-1. Pretrain in a non-personalized manner with FedAvg: `scripts/federated/pretrain/so_mini_pretrain.sh`
-2. Run FedAlt: `scripts/federated/main_stateful_pretrained/so_mini_pfl_1.sh` for one random seed and `so_mini_pfl_all.sh` for all random seeds
+1. Pretrain in a non-personalized manner with FedAvg: `scripts/federated/pretrain/stackoverflow.sh`
+2. Run FedAlt: `scripts/federated/partial_personalization/stackoverflow.sh`
         - Note: the saved model in step 1 is loaded again in step 2. Make sure the argument `pretrained_model_path` points to the correct checkpoint from step 1
-3. Local Finetuning: `scripts/finetune/pfl/all_so_mini.sh` for a single seed and `all_so_mini_seeds.sh` for all the seeds.
+3. Local Finetuning: `scripts/finetune/partial_personalization/stackoverflow.sh`
 
 Implementation details
 ----------------------
