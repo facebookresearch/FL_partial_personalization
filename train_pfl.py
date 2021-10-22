@@ -195,7 +195,7 @@ def get_pfl_optimizer(pfl_algo, **kwargs):
         return pfl.optim.FedAvg(**kwargs)
     elif pfl_algo.lower() in ['fedsim', 'pfl_joint', 'pfl_simultaneous']:
         return pfl.optim.FedSim(**kwargs)
-    elif pfl_algo.lower() in ['fedsim', 'pfl_alternating', 'pfl_am']:
+    elif pfl_algo.lower() in ['fedalt', 'pfl_alternating', 'pfl_am']:
         return pfl.optim.FedAlt(**kwargs)
     elif pfl_algo.lower() == 'pfedme':
         return pfl.optim.PFedMe(**kwargs)
