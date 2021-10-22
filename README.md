@@ -6,6 +6,10 @@ Contact: pillutla@cs.washington.edu
 
 [Paper Link](https://openreview.net/forum?id=iFf26yMjRdN).
 
+# Requirements
+Install [PyTorch](https://pytorch.org/) version 1.9 for your appropriate cuda version, as well torchvision and torchaudio. 
+Then, install other dependences with `pip install -r requirements.txt`.
+
 # Outline of the Repository
 
 Here is the outline:
