@@ -48,7 +48,7 @@ def make_pfl_train_parser():
     # PFL Args
     pfl_parser = parser.add_argument_group('train_args', 'PFL args')
     pfl_parser.add_argument('--pfl_algo', type=str, required=True,
-        choices=['fedavg', 'pfl_alternating', 'pfl_joint', 'pfl_simultaneous', 'pfedme']
+        choices=['fedavg', 'fedalt', 'fedsim', 'pfedme']
     )
     pfl_parser.add_argument('--stateless_clients', action='store_true')  # if True, clients cannot maintain state
     pfl_parser.add_argument('--personalize_on_client', type=str, default='none')  # how to split/share the model on the client

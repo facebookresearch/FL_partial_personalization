@@ -34,8 +34,8 @@ pfl_algo_rename_dict = dict(
     pfl_fl = "Finetune",
     pfl_am = "FedAlt",
     pfl_su = "FedSim",
-    pfl_alternating = 'FedAlt',
-    pfl_joint = 'FedSim'
+    fedalt = 'FedAlt',
+    fedsim = 'FedSim'
 )
 
 dataset_rename_dict = dict(
@@ -86,16 +86,12 @@ mean_params_hist = dict(color=COLORS[6], linestyle='dashed', linewidth=2)
 
 
 from socket import gethostname
-if 'devfair' in gethostname():
+if 'devfair' in gethostname():  # fair cluster
     MAIN_DIR = '/checkpoint/pillutla/pfl'
-elif 'pillutla-mbp' in gethostname():
+elif 'pillutla-mbp' in gethostname(): # laptop
     MAIN_DIR = '/Users/pillutla/Dropbox (Facebook)/code/pfl_outputs'
-elif 'zh-' in gethostname():
-    MAIN_DIR = '/mnt/hdd/pillutla/fair'
-elif gethostname() == 'kakade-workstation':
-    MAIN_DIR = '/home/pillutla/fl/pfl_outputs'
-else:  # personal laptop
-    MAIN_DIR = None
+else:
+    raise ValueError('Unknown host')
 
 OUTPUT_DIR_FL = f"{MAIN_DIR}/outputs2"
 OUTPUT_DIR_PFL = f"{MAIN_DIR}/outputs3"
@@ -282,11 +278,11 @@ def rename_one_item(name):
 
 def get_main_pertask_table_mean_10p(
     ds_and_model, init, state, seeds=list(range(1,6)), ne_finetune=5, ne_pfl=1,
-    use_unweighted_stats=False, finetune_pfl_joint=False, metric_name="accuracy",
+    use_unweighted_stats=False, finetune_fedsim=False, metric_name="accuracy",
 ):
     suffix = "_u" if use_unweighted_stats else ""
     metric_lst = [f"{metric_name}|mean{suffix}", f"{metric_name}|quantile_0.1{suffix}"]
-    pfl_algo_lst = ["finetune", "pfl_alternating", "pfl_joint"]
+    pfl_algo_lst = ["finetune", "fedalt", "fedsim"]
     name_lst = get_name_list(ds_and_model)
 
     columns = pd.MultiIndex.from_product([metric_lst, pfl_algo_lst])
@@ -302,7 +298,7 @@ def get_main_pertask_table_mean_10p(
 
         for pfl_algo in pfl_algo_lst:
             ne = ne_finetune if pfl_algo == 'finetune' else ne_pfl
-            if pfl_algo == "pfl_joint" and not finetune_pfl_joint:
+            if pfl_algo == "fedsim" and not finetune_fedsim:
                 row = "pretrained"
             else:
                 row = "finetuned"
@@ -315,12 +311,12 @@ def get_main_pertask_table_mean_10p(
 
 def get_main_pertask_table_mean_states(
     ds_and_model, init, seeds=list(range(1,6)), ne_finetune=5, ne_pfl=1,
-    use_unweighted_stats=False, finetune_pfl_joint=False, metric_name="accuracy",
+    use_unweighted_stats=False, finetune_fedsim=False, metric_name="accuracy",
 ):
     suffix = "_u" if use_unweighted_stats else ""
     metric = f"{metric_name}|mean{suffix}"
     state_lst = ['stateful', 'stateless']
-    pfl_algo_lst = ["finetune", "pfl_alternating", "pfl_joint"]
+    pfl_algo_lst = ["finetune", "fedalt", "fedsim"]
     name_lst = get_name_list(ds_and_model)
 
     columns = pd.MultiIndex.from_product([state_lst, pfl_algo_lst])
@@ -337,7 +333,7 @@ def get_main_pertask_table_mean_states(
 
         for pfl_algo in pfl_algo_lst:
             ne = ne_finetune if pfl_algo == 'finetune' else ne_pfl
-            if pfl_algo == "pfl_joint" and not finetune_pfl_joint:
+            if pfl_algo == "fedsim" and not finetune_fedsim:
                 row = "pretrained"
             else:
                 row = "finetuned"
@@ -350,14 +346,14 @@ def get_main_pertask_table_mean_states(
 
 def get_main_combinedtask_table_mean(
     init="pretrained", state="stateful", seeds=list(range(1,6)), ne_finetune=5, ne_pfl=5, 
-    use_unweighted_stats=False, finetune_pfl_joint=True, metric_name="accuracy", use_emnist=False
+    use_unweighted_stats=False, finetune_fedsim=True, metric_name="accuracy", use_emnist=False
 ):
     suffix = "_u" if use_unweighted_stats else ""
     metric = f"{metric_name}|mean{suffix}"
     ds_and_model_lst = ['so_mini', 'gldv2b_resnetgn']
     if use_emnist:
         ds_and_model_lst += ['emnist_resnetgn']
-    pfl_algo_lst = ["finetune", "pfl_alternating", "pfl_joint"]
+    pfl_algo_lst = ["finetune", "fedalt", "fedsim"]
     name_lsts = [get_name_list(ds_and_model)[:3] for ds_and_model in ds_and_model_lst]
     name_rename_dict = OrderedDict([
         ('inp_layer', 'Input Layer'), ('tr_layer_0', 'Input Layer'),
@@ -372,7 +368,7 @@ def get_main_combinedtask_table_mean(
         df_out = df_out_lst[i]
         for pfl_algo in pfl_algo_lst:
             ne = ne_finetune if pfl_algo == 'finetune' else ne_pfl
-            if pfl_algo == "pfl_joint" and not finetune_pfl_joint:
+            if pfl_algo == "fedsim" and not finetune_fedsim:
                 row = "pretrained"
             else:
                 row = "finetuned"
@@ -385,11 +381,11 @@ def get_main_combinedtask_table_mean(
 
 def get_main_pertask_table_mean(
     ds_and_model, init, state, seeds=list(range(1, 6)), ne_finetune=5, ne_pfl=1,
-    use_unweighted_stats=False, finetune_pfl_joint=False, metric_name="accuracy"
+    use_unweighted_stats=False, finetune_fedsim=False, metric_name="accuracy"
 ):
     suffix = "_u" if use_unweighted_stats else ""
     metric = f"{metric_name}|mean{suffix}"
-    pfl_algo_lst = ["finetune", "pfl_alternating", "pfl_joint"]
+    pfl_algo_lst = ["finetune", "fedalt", "fedsim"]
     name_lst = get_name_list(ds_and_model)
 
     columns = pfl_algo_lst
@@ -405,7 +401,7 @@ def get_main_pertask_table_mean(
 
         for pfl_algo in pfl_algo_lst:
             ne = ne_finetune if pfl_algo == 'finetune' else ne_pfl
-            if pfl_algo == "pfl_joint" and not finetune_pfl_joint:
+            if pfl_algo == "fedsim" and not finetune_fedsim:
                 row = "pretrained"
             else:
                 row = "finetuned"
@@ -433,7 +429,7 @@ def get_final_finetune_pertask_table(
 ):
     suffix = "_u" if use_unweighted_stats else ""
     metric = f"accuracy|mean{suffix}"
-    pfl_algo_lst = ["pfl_alternating", "pfl_joint"]
+    pfl_algo_lst = ["fedalt", "fedsim"]
     name_lst = get_name_list(ds_and_model)
 
     columns = pfl_algo_lst
@@ -650,7 +646,7 @@ def _scatter_plot_helper_1(
             
 
 
-def per_user_stats_scatter_plot(ds_and_model, pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot(ds_and_model, pfl_algo="fedalt", 
         args={}, metric_name='accuracy', min_is_best=False, x_train_or_test='train', train_or_test='test',
         hist2d=False, xlim=None, ylim=None, gridsize=25
 ):
@@ -677,7 +673,7 @@ def per_user_stats_scatter_plot(ds_and_model, pfl_algo="pfl_alternating",
     # extra_artists = (suptitle, *extra_artists)
     return f, extra_artists
 
-def per_user_stats_scatter_plot_full_v_partial(ds_and_model, pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot_full_v_partial(ds_and_model, pfl_algo="fedalt", 
         args={}, metric_name='accuracy', min_is_best=False, x_train_or_test='train', train_or_test='test',
         ne_finetune=5, hist2d=False, xlim=None, ylim=None, gridsize=25
 ):
@@ -705,7 +701,7 @@ def per_user_stats_scatter_plot_full_v_partial(ds_and_model, pfl_algo="pfl_alter
     # extra_artists = (suptitle, *extra_artists) 
     return f, extra_artists
 
-def per_user_stats_scatter_plot_full_v_partial_main(ds_and_model, pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot_full_v_partial_main(ds_and_model, pfl_algo="fedalt", 
         args={}, metric_name='accuracy', min_is_best=False, x_train_or_test='train',
         ne_finetune=5, hist2d=False, xlim=None, ylim=None, gridsize=25
 ):
@@ -744,7 +740,7 @@ def per_user_stats_scatter_plot_full_v_partial_main(ds_and_model, pfl_algo="pfl_
     return f, extra_artists
 
 
-def per_user_stats_scatter_plot_regularization(ds_and_model, pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot_regularization(ds_and_model, pfl_algo="fedalt", 
         args={}, metric_name='accuracy', min_is_best=False, x_train_or_test='train', train_or_test='test',
         hist2d=False, xlim=None, ylim=None, gridsize=25
 ):
@@ -778,7 +774,7 @@ def per_user_stats_scatter_plot_regularization(ds_and_model, pfl_algo="pfl_alter
     # extra_artists = (suptitle, *extra_artists) 
     return f, extra_artists
 
-def per_user_stats_scatter_plot_dropout(ds_and_model, pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot_dropout(ds_and_model, pfl_algo="fedalt", 
         args={}, metric_name='accuracy', min_is_best=False, x_train_or_test='train', train_or_test='test',
         hist2d=False, xlim=None, ylim=None, gridsize=25
 ):
@@ -837,7 +833,7 @@ def _boxplot_helper_3(outs, train_metrics_fedavg, test_metrics_fedavg, ax, clean
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
 
-def per_user_stats_scatter_plot_3(ds_and_model, ax=None, pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot_3(ds_and_model, ax=None, pfl_algo="fedalt", 
         args={}, metric_name='accuracy', train=False, min_is_best=False, boxplot=False, rotation=0, annotate=True
 ):
     if ax is None:
@@ -854,7 +850,7 @@ def per_user_stats_scatter_plot_3(ds_and_model, ax=None, pfl_algo="pfl_alternati
     clean_name_lst = ["Adapter" if 'adapter' in name else rename_one_item(name) for name in name_lst]
     _boxplot_helper_3(outs, train_metrics_fedavg, test_metrics_fedavg, ax, clean_name_lst, metric_name, train, min_is_best, boxplot, rotation, annotate)
 
-def per_user_scatter_plot_3_full_v_partial(ds_and_model, ax=None, pfl_algo="pfl_alternating", 
+def per_user_scatter_plot_3_full_v_partial(ds_and_model, ax=None, pfl_algo="fedalt", 
         args={}, metric_name='accuracy', train=False, min_is_best=False, 
         boxplot=False, rotation=0, ne_finetune=5, annotate=True
 ):
@@ -873,7 +869,7 @@ def per_user_scatter_plot_3_full_v_partial(ds_and_model, ax=None, pfl_algo="pfl_
     _, train_metrics_fedavg, _, test_metrics_fedavg = load_pkl(get_fedavg_finetune_all_fn(ds_and_model, "finetune")) # load the metrics only
     _boxplot_helper_3(outs, train_metrics_fedavg, test_metrics_fedavg, ax, clean_name_lst, metric_name, train, min_is_best, boxplot, rotation, annotate)
 
-def per_user_stats_scatter_plot_3_regularization(ds_and_model, ax=None, pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot_3_regularization(ds_and_model, ax=None, pfl_algo="fedalt", 
         args={}, metric_name='accuracy', train=False, min_is_best=False, boxplot=False, rotation=0, annotate=True
 ):
     if ax is None:
@@ -900,7 +896,7 @@ def per_user_stats_scatter_plot_3_regularization(ds_and_model, ax=None, pfl_algo
     ax.set_title('Effect of Regularization ({})'.format('train' if train else 'test'), fontsize=18)
     _boxplot_helper_3(outs, train_metrics_fedavg, test_metrics_fedavg, ax, clean_name_lst, metric_name, train, min_is_best, boxplot, rotation, annotate)
 
-def per_user_stats_scatter_plot_3_dropout(ds_and_model, ax=None, pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot_3_dropout(ds_and_model, ax=None, pfl_algo="fedalt", 
         args={}, metric_name='accuracy', train=False, min_is_best=False, boxplot=False, rotation=0, annotate=True
 ):
     if ax is None:
@@ -999,7 +995,7 @@ def _scatter_plot_helper_4(
     plt.tight_layout()
     return extra_artists
         
-def per_user_stats_scatter_plot_4(ds_and_model, pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot_4(ds_and_model, pfl_algo="fedalt", 
         args={}, seeds=list(range(1, 6)), metric_name='accuracy', min_is_best=False, ylims=None, ylim=None, train=False,
         annotate=False, 
 ):
@@ -1022,7 +1018,7 @@ def per_user_stats_scatter_plot_4(ds_and_model, pfl_algo="pfl_alternating",
     extra_artists = ()
     return f, extra_artists
 
-def per_user_stats_scatter_plot_full_v_partial_4(ds_and_model, seeds=list(range(1, 6)), pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot_full_v_partial_4(ds_and_model, seeds=list(range(1, 6)), pfl_algo="fedalt", 
         args={}, metric_name='accuracy', min_is_best=False, ylims=None, ylim=None, train=False,
         ne_finetune=5,  annotate=False
 ):
@@ -1051,7 +1047,7 @@ def per_user_stats_scatter_plot_full_v_partial_4(ds_and_model, seeds=list(range(
     return f, extra_artists
 
 
-def per_user_stats_scatter_plot_full_v_partial_4_main(ds_and_model, seeds=list(range(1, 6)), pfl_algo="pfl_alternating", 
+def per_user_stats_scatter_plot_full_v_partial_4_main(ds_and_model, seeds=list(range(1, 6)), pfl_algo="fedalt", 
         args={}, metric_name='accuracy', min_is_best=False, ylims=None, ylim=None, train=False,
         ne_finetune=5, annotate=True
 ):

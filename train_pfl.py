@@ -21,7 +21,7 @@ def main():
     print('Args', '-'*50, '\n', args, '\n', '-'*50)
     torch.manual_seed(args.seed+5)
     if args.dataset == 'gldv2':
-        tf.random.set_seed(10) # for a consistent train-test split
+        tf.random.set_seed(10) # for a consistent train-test split for this dataset.
     else:
         tf.random.set_seed(args.seed+10)  # for TFF dataloaders
     device = pfl.utils.get_device_from_arg(args.device)
@@ -193,10 +193,10 @@ def main():
 def get_pfl_optimizer(pfl_algo, **kwargs):
     if pfl_algo.lower() == 'fedavg':
         return pfl.optim.FedAvg(**kwargs)
-    elif pfl_algo.lower() in ['pfl_joint', 'pfl_simultaneous']:
-        return pfl.optim.PFLJointTrain(**kwargs)
-    elif pfl_algo.lower() in ['pfl_alternating', 'pfl_am']:
-        return pfl.optim.PFLAlternatingTrain(**kwargs)
+    elif pfl_algo.lower() in ['fedsim', 'pfl_joint', 'pfl_simultaneous']:
+        return pfl.optim.FedSim(**kwargs)
+    elif pfl_algo.lower() in ['fedalt', 'pfl_alternating', 'pfl_am']:
+        return pfl.optim.FedAlt(**kwargs)
     elif pfl_algo.lower() == 'pfedme':
         return pfl.optim.PFedMe(**kwargs)
     else:
