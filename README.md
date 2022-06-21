@@ -2,9 +2,9 @@
 
 Authors: Krishna Pillutla, Kshitiz Malik, Abdelrahman Mohamed, Michael Rabbat, Maziar Sanjabi, Lin Xiao
 
-Contact: pillutla@cs.washington.edu
+Contact: pillutla@cs.washington.edu, linx@fb.com
 
-[Paper Link](https://openreview.net/forum?id=iFf26yMjRdN).
+[Paper Link](https://arxiv.org/abs/2204.03809).
 
 # Requirements
 Install [PyTorch](https://pytorch.org/) version 1.9 for your appropriate cuda version, as well torchvision and torchaudio. 
