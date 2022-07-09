@@ -1,0 +1,9 @@
+numpy
+pandas
+statsmodels==0.12.2
+torch
+torchaudio
+torchvision
+tensorflow_federated==0.19.0
+silence_tensorflow
+torchinfo
